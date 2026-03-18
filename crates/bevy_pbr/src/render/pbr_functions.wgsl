@@ -278,6 +278,27 @@ fn calculate_F0(base_color: vec3<f32>, metallic: f32, reflectance: vec3<f32>) ->
 }
 
 #ifndef PREPASS_FRAGMENT
+
+// Bit usage for light mask:
+// 1-4: inside light room => has to be completely equal
+// 5-16: inside vehicle index => has to be completely equal
+// 17-20: outside object mask => bitwise and
+// 21-28: outside level mask => bitwise and
+// 29-32: currently not used
+
+fn check_light_mask(mask_a: u32, mask_b: u32) -> bool {
+    return
+    // both inside light room and inside vehicle index are completely equal
+    (((mask_a & 0xF) == (mask_b & 0xF)) &&
+    ((mask_a & 0xFFF0) == (mask_b & 0xFFF0)) &&
+    ((mask_a & 0xF) > 0) &&
+    ((mask_a & 0xFFF0) > 0)  
+    ) || (
+    // OR both outside object and level masks are bitwise and
+    (((mask_a & 0xF0000) & (mask_b & 0xF0000)) != 0) &&
+    (((mask_a & 0xFF00000) & (mask_b & 0xFF00000)) != 0));
+}
+
 fn apply_pbr_lighting(
     in: pbr_types::PbrInput,
 ) -> vec4<f32> {
@@ -406,7 +427,7 @@ fn apply_pbr_lighting(
             i = i + 1u) {
         let light_id = clustering::get_clusterable_object_id(i);
 
-        if (view_bindings::clusterable_objects.data[light_id].mask & in.light_mask) == 0 {
+        if (!check_light_mask(view_bindings::clusterable_objects.data[light_id].mask, in.light_mask)) {
             continue;
         }
 
@@ -457,9 +478,9 @@ fn apply_pbr_lighting(
             i = i + 1u) {
         let light_id = clustering::get_clusterable_object_id(i);        
 
-        if (view_bindings::clusterable_objects.data[light_id].mask & in.light_mask) == 0 {
+        if (!check_light_mask(view_bindings::clusterable_objects.data[light_id].mask, in.light_mask)) {
             continue;
-        }
+        }        
 
         // If we're lightmapped, disable diffuse contribution from the light if
         // requested, to avoid double-counting light.
@@ -520,9 +541,9 @@ fn apply_pbr_lighting(
         // note point and spot lights aren't skippable, as the relevant lights are filtered in `assign_lights_to_clusters`
         let light = &view_bindings::lights.directional_lights[i];
 
-        if (light.mask & in.light_mask) == 0 {
+        if (!check_light_mask(light.mask, in.light_mask)) {
             continue;
-        }
+        }        
 
         // If we're lightmapped, disable diffuse contribution from the light if
         // requested, to avoid double-counting light.
