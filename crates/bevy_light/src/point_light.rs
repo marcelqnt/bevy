@@ -123,6 +123,8 @@ pub struct PointLight {
     ///
     /// This only has an effect if shadows are enabled.
     pub shadow_map_near_z: f32,
+
+    pub mask: u32,
 }
 
 impl Default for PointLight {
@@ -139,6 +141,7 @@ impl Default for PointLight {
             shadow_map_near_z: Self::DEFAULT_SHADOW_MAP_NEAR_Z,
             #[cfg(feature = "experimental_pbr_pcss")]
             soft_shadows_enabled: false,
+            mask: u32::MAX,
         }
     }
 }

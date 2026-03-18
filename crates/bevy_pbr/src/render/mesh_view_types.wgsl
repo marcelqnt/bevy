@@ -15,6 +15,7 @@ struct ClusterableObject {
     shadow_map_near_z: f32,
     decal_index: u32,
     pad: f32,
+    mask: u32,
 };
 
 const POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT: u32                    = 1u << 0u;
@@ -43,6 +44,7 @@ struct DirectionalLight {
     decal_index: u32,
     sun_disk_angular_size: f32,
     sun_disk_intensity: f32,
+    mask: u32,
 };
 
 const DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT: u32                  = 1u << 0u;
@@ -108,7 +110,7 @@ struct ClusterOffsetsAndCounts {
 };
 #else
 struct ClusterableObjects {
-    data: array<ClusterableObject, 204u>,
+    data: array<ClusterableObject, 170u>,
 };
 struct ClusterLightIndexLists {
     // each u32 contains 4 u8 indices into the ClusterableObjects array

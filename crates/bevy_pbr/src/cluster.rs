@@ -18,7 +18,7 @@ use crate::MeshPipeline;
 
 // NOTE: this must be kept in sync with the same constants in
 // `mesh_view_types.wgsl`.
-pub const MAX_UNIFORM_BUFFER_CLUSTERABLE_OBJECTS: usize = 204;
+pub const MAX_UNIFORM_BUFFER_CLUSTERABLE_OBJECTS: usize = 170;
 // Make sure that the clusterable object buffer doesn't overflow the maximum
 // size of a UBO on WebGL 2.
 const _: () =
@@ -67,6 +67,7 @@ pub struct GpuClusterableObject {
     pub(crate) shadow_map_near_z: f32,
     pub(crate) decal_index: u32,
     pub(crate) pad: f32,
+    pub(crate) mask: u32,
 }
 
 #[derive(Resource)]

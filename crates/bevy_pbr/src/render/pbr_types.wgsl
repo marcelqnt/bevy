@@ -111,6 +111,7 @@ struct PbrInput {
     // view world position
     V: vec3<f32>,
     lightmap_light: vec3<f32>,
+    light_mask: u32,
     clearcoat_N: vec3<f32>,
     anisotropy_strength: f32,
     // These two aren't specific to anisotropy, but we only fill them in if
@@ -146,6 +147,8 @@ fn pbr_input_new() -> PbrInput {
     pbr_input.lightmap_light = vec3<f32>(0.0);
 
     pbr_input.flags = 0u;
+
+    pbr_input.light_mask = 4294967295;
 
     return pbr_input;
 }

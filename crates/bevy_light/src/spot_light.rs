@@ -123,6 +123,8 @@ pub struct SpotLight {
     /// Light is attenuated from `inner_angle` to `outer_angle` to give a smooth falloff.
     /// `inner_angle` should be <= `outer_angle`
     pub inner_angle: f32,
+
+    pub mask: u32,
 }
 
 impl SpotLight {
@@ -151,6 +153,7 @@ impl Default for SpotLight {
             outer_angle: core::f32::consts::FRAC_PI_4,
             #[cfg(feature = "experimental_pbr_pcss")]
             soft_shadows_enabled: false,
+            mask: u32::MAX,
         }
     }
 }

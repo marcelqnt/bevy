@@ -135,6 +135,8 @@ pub struct DirectionalLight {
     /// is scaled to the shadow map's texel size so that it is automatically
     /// adjusted to the orthographic projection.
     pub shadow_normal_bias: f32,
+
+    pub mask: u32,
 }
 
 impl Default for DirectionalLight {
@@ -148,6 +150,7 @@ impl Default for DirectionalLight {
             affects_lightmapped_mesh_diffuse: true,
             #[cfg(feature = "experimental_pbr_pcss")]
             soft_shadow_size: None,
+            mask: u32::MAX,
         }
     }
 }

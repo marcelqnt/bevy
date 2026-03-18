@@ -406,6 +406,10 @@ fn apply_pbr_lighting(
             i = i + 1u) {
         let light_id = clustering::get_clusterable_object_id(i);
 
+        if (view_bindings::clusterable_objects.data[light_id].mask & in.light_mask) == 0 {
+            continue;
+        }
+
         // If we're lightmapped, disable diffuse contribution from the light if
         // requested, to avoid double-counting light.
 #ifdef LIGHTMAP
@@ -420,7 +424,7 @@ fn apply_pbr_lighting(
         if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
                 && (view_bindings::clusterable_objects.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
             shadow = shadows::fetch_point_shadow(light_id, in.world_position, in.world_normal);
-        }
+        }        
 
         let light_contrib = lighting::point_light(light_id, &lighting_input, enable_diffuse, true);
         direct_light += light_contrib * shadow;
@@ -451,7 +455,11 @@ fn apply_pbr_lighting(
     for (var i: u32 = clusterable_object_index_ranges.first_spot_light_index_offset;
             i < clusterable_object_index_ranges.first_reflection_probe_index_offset;
             i = i + 1u) {
-        let light_id = clustering::get_clusterable_object_id(i);
+        let light_id = clustering::get_clusterable_object_id(i);        
+
+        if (view_bindings::clusterable_objects.data[light_id].mask & in.light_mask) == 0 {
+            continue;
+        }
 
         // If we're lightmapped, disable diffuse contribution from the light if
         // requested, to avoid double-counting light.
@@ -511,6 +519,10 @@ fn apply_pbr_lighting(
         // check if this light should be skipped, which occurs if this light does not intersect with the view
         // note point and spot lights aren't skippable, as the relevant lights are filtered in `assign_lights_to_clusters`
         let light = &view_bindings::lights.directional_lights[i];
+
+        if (light.mask & in.light_mask) == 0 {
+            continue;
+        }
 
         // If we're lightmapped, disable diffuse contribution from the light if
         // requested, to avoid double-counting light.
