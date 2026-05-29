@@ -188,6 +188,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         (environment_light.diffuse * diffuse_occlusion +
         environment_light.specular * specular_occlusion);
 #endif
+    // let smoothness = (1.0 - perceptual_roughness); //.clamp(0.0, 1.0);
+    // smoothness *= smoothness;
+
+    // indirect_light *= smoothness; // * pbr_input.material.reflectance.r;
 
     // Write the results.
     return vec4(fragment.rgb + indirect_light, 1.0);
