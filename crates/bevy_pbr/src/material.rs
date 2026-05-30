@@ -163,9 +163,9 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
     }
 
     #[inline]
-    /// Add a bias to the view depth of the mesh which can be used to force a specific render order.
-    /// for meshes with similar depth, to avoid z-fighting.
+    /// Bias applied to depth writes via `wgpu::DepthBiasState::Constant` to reduce z-fighting.
     /// The bias is in depth-texture units so large values may be needed to overcome small depth differences.
+    /// Transparent render order is controlled by [`bevy_mesh::Mesh::transparent_sort_offset`].
     fn depth_bias(&self) -> f32 {
         0.0
     }
@@ -1159,6 +1159,7 @@ pub fn specialize_material_meshes(
 /// them to [`BinnedRenderPhase`]s or [`SortedRenderPhase`]s as appropriate.
 pub fn queue_material_meshes(
     render_materials: Res<ErasedRenderAssets<PreparedMaterial>>,
+    render_meshes: Res<RenderAssets<RenderMesh>>,
     render_mesh_instances: Res<RenderMeshInstances>,
     render_material_instances: Res<RenderMaterialInstances>,
     mesh_allocator: Res<MeshAllocator>,
@@ -1227,10 +1228,14 @@ pub fn queue_material_meshes(
                 continue;
             };
 
+            let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id) else {
+                continue;
+            };
+
             match material.properties.render_phase_type {
                 RenderPhaseType::Transmissive => {
                     let distance = rangefinder.distance_translation(&mesh_instance.translation)
-                        + material.properties.depth_bias;
+                        + mesh.transparent_sort_offset;
                     transmissive_phase.add(Transmissive3d {
                         entity: (*render_entity, *visible_entity),
                         draw_function,
@@ -1299,7 +1304,7 @@ pub fn queue_material_meshes(
                 }
                 RenderPhaseType::Transparent => {
                     let distance = rangefinder.distance_translation(&mesh_instance.translation)
-                        + material.properties.depth_bias;
+                        + mesh.transparent_sort_offset;
                     transparent_phase.add(Transparent3d {
                         entity: (*render_entity, *visible_entity),
                         draw_function,
@@ -1496,8 +1501,7 @@ pub struct MaterialProperties {
     /// These are precalculated so that we can just "or" them together in
     /// [`queue_material_meshes`].
     pub mesh_pipeline_key_bits: MeshPipelineKey,
-    /// Add a bias to the view depth of the mesh which can be used to force a specific render order
-    /// for meshes with equal depth, to avoid z-fighting.
+    /// Bias applied to depth writes via `wgpu::DepthBiasState::Constant` to reduce z-fighting.
     /// The bias is in depth-texture units so large values may be needed to overcome small depth differences.
     pub depth_bias: f32,
     /// Whether the material would like to read from [`ViewTransmissionTexture`](bevy_core_pipeline::core_3d::ViewTransmissionTexture).

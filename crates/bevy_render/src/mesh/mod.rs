@@ -85,6 +85,9 @@ pub struct RenderMesh {
     /// Combined with [`RenderMesh::buffer_info`], this specifies the complete
     /// layout of the buffers associated with this mesh.
     pub layout: MeshVertexBufferLayoutRef,
+
+    /// See [`Mesh::transparent_sort_offset`].
+    pub transparent_sort_offset: f32,
 }
 
 impl RenderMesh {
@@ -176,6 +179,7 @@ impl RenderAsset for RenderMesh {
             key_bits,
             layout: mesh_vertex_buffer_layout,
             morph_targets,
+            transparent_sort_offset: mesh.transparent_sort_offset,
         })
     }
 }

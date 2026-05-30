@@ -140,12 +140,6 @@ pub trait Material2d: AsBindGroup + Asset + Clone + Sized {
         ShaderRef::Default
     }
 
-    /// Add a bias to the view depth of the mesh which can be used to force a specific render order.
-    #[inline]
-    fn depth_bias(&self) -> f32 {
-        0.0
-    }
-
     fn alpha_mode(&self) -> AlphaMode2d {
         AlphaMode2d::Opaque
     }
@@ -911,7 +905,7 @@ pub fn queue_material2d_meshes<M: Material2d>(
                         // lowest sort key and getting closer should increase. As we have
                         // -z in front of the camera, the largest distance is -far with values increasing toward the
                         // camera. As such we can just use mesh_z as the distance
-                        sort_key: FloatOrd(mesh_z + material_2d.properties.depth_bias),
+                        sort_key: FloatOrd(mesh_z + mesh.transparent_sort_offset),
                         // Batching is done in batch_and_prepare_render_phase
                         batch_range: 0..1,
                         extra_index: PhaseItemExtraIndex::None,
@@ -931,10 +925,6 @@ pub struct Material2dBindGroupId(pub Option<BindGroupId>);
 pub struct Material2dProperties {
     /// The [`AlphaMode2d`] of this material.
     pub alpha_mode: AlphaMode2d,
-    /// Add a bias to the view depth of the mesh which can be used to force a specific render order
-    /// for meshes with equal depth, to avoid z-fighting.
-    /// The bias is in depth-texture units so large values may
-    pub depth_bias: f32,
     /// The bits in the [`Mesh2dPipelineKey`] for this material.
     ///
     /// These are precalculated so that we can just "or" them together in
@@ -1003,7 +993,6 @@ impl<M: Material2d> RenderAsset for PreparedMaterial2d<M> {
                     bind_group: prepared.bind_group,
                     key: bind_group_data,
                     properties: Material2dProperties {
-                        depth_bias: material.depth_bias(),
                         alpha_mode: material.alpha_mode(),
                         mesh_pipeline_key_bits,
                         draw_function_id,

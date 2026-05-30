@@ -678,8 +678,8 @@ pub struct StandardMaterial {
     /// camera while negative values cause the material to render behind
     /// other objects. This is independent of the viewport.
     ///
-    /// `depth_bias` affects render ordering and depth write operations
-    /// using the `wgpu::DepthBiasState::Constant` field.
+    /// `depth_bias` adjusts depth write operations using the `wgpu::DepthBiasState::Constant` field.
+    /// Transparent render order is controlled by [`bevy_mesh::Mesh::transparent_sort_offset`].
     ///
     /// [z-fighting]: https://en.wikipedia.org/wiki/Z-fighting
     pub depth_bias: f32,

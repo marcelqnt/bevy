@@ -145,6 +145,11 @@ pub struct Mesh {
     /// Does nothing if not used with `bevy_solari`, or if the mesh is not compatible
     /// with `bevy_solari` (see `bevy_solari`'s docs).
     pub enable_raytracing: bool,
+    /// Offset added to view-space depth when sorting transparent and transmissive meshes.
+    ///
+    /// All instances that share this mesh use the same offset. Larger values draw later
+    /// (closer to the camera) in back-to-front transparent ordering.
+    pub transparent_sort_offset: f32,
 }
 
 impl Mesh {
@@ -234,6 +239,7 @@ impl Mesh {
             morph_target_names: None,
             asset_usage,
             enable_raytracing: true,
+            transparent_sort_offset: 0.0,
         }
     }
 
