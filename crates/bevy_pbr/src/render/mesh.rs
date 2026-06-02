@@ -2093,7 +2093,8 @@ bitflags::bitflags! {
         const HAS_PREVIOUS_MORPH                = 1 << 19;
         const OIT_ENABLED                       = 1 << 20;
         const DISTANCE_FOG                      = 1 << 21;
-        const LAST_FLAG                         = Self::DISTANCE_FOG.bits();
+        const DEPTH_WRITE                       = 1 << 22;
+        const LAST_FLAG                         = Self::DEPTH_WRITE.bits();
 
         // Bitfields
         const MSAA_RESERVED_BITS                = Self::MSAA_MASK_BITS << Self::MSAA_SHIFT_BITS;
@@ -2366,7 +2367,7 @@ impl SpecializedMeshPipeline for MeshPipeline {
 
         let vertex_buffer_layout = layout.0.get_layout(&vertex_attributes)?;
 
-        let (label, blend, depth_write_enabled);
+        let (label, blend);
         let pass = key.intersection(MeshPipelineKey::BLEND_RESERVED_BITS);
         let (mut is_opaque, mut alpha_to_coverage_enabled) = (false, false);
         if key.contains(MeshPipelineKey::OIT_ENABLED) && pass == MeshPipelineKey::BLEND_ALPHA {
@@ -2376,21 +2377,14 @@ impl SpecializedMeshPipeline for MeshPipeline {
             shader_defs.push("OIT_ENABLED".into());
             // TODO it should be possible to use this to combine MSAA and OIT
             // alpha_to_coverage_enabled = true;
-            depth_write_enabled = false;
         } else if pass == MeshPipelineKey::BLEND_ALPHA {
             label = "alpha_blend_mesh_pipeline".into();
             blend = Some(BlendState::ALPHA_BLENDING);
-            // For the transparent pass, fragments that are closer will be alpha blended
-            // but their depth is not written to the depth buffer
-            depth_write_enabled = false;
         } else if pass == MeshPipelineKey::BLEND_PREMULTIPLIED_ALPHA {
             label = "premultiplied_alpha_mesh_pipeline".into();
             blend = Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING);
             shader_defs.push("PREMULTIPLY_ALPHA".into());
             shader_defs.push("BLEND_PREMULTIPLIED_ALPHA".into());
-            // For the transparent pass, fragments that are closer will be alpha blended
-            // but their depth is not written to the depth buffer
-            depth_write_enabled = false;
         } else if pass == MeshPipelineKey::BLEND_MULTIPLY {
             label = "multiply_mesh_pipeline".into();
             blend = Some(BlendState {
@@ -2403,17 +2397,10 @@ impl SpecializedMeshPipeline for MeshPipeline {
             });
             shader_defs.push("PREMULTIPLY_ALPHA".into());
             shader_defs.push("BLEND_MULTIPLY".into());
-            // For the multiply pass, fragments that are closer will be alpha blended
-            // but their depth is not written to the depth buffer
-            depth_write_enabled = false;
         } else if pass == MeshPipelineKey::BLEND_ALPHA_TO_COVERAGE {
             label = "alpha_to_coverage_mesh_pipeline".into();
             // BlendState::REPLACE is not needed here, and None will be potentially much faster in some cases
             blend = None;
-            // For the opaque and alpha mask passes, fragments that are closer will replace
-            // the current fragment value in the output and the depth is written to the
-            // depth buffer
-            depth_write_enabled = true;
             is_opaque = !key.contains(MeshPipelineKey::READS_VIEW_TRANSMISSION_TEXTURE);
             alpha_to_coverage_enabled = true;
             shader_defs.push("ALPHA_TO_COVERAGE".into());
@@ -2421,12 +2408,10 @@ impl SpecializedMeshPipeline for MeshPipeline {
             label = "opaque_mesh_pipeline".into();
             // BlendState::REPLACE is not needed here, and None will be potentially much faster in some cases
             blend = None;
-            // For the opaque and alpha mask passes, fragments that are closer will replace
-            // the current fragment value in the output and the depth is written to the
-            // depth buffer
-            depth_write_enabled = true;
             is_opaque = !key.contains(MeshPipelineKey::READS_VIEW_TRANSMISSION_TEXTURE);
         }
+
+        let depth_write_enabled = key.contains(MeshPipelineKey::DEPTH_WRITE);
 
         if key.contains(MeshPipelineKey::NORMAL_PREPASS) {
             shader_defs.push("NORMAL_PREPASS".into());

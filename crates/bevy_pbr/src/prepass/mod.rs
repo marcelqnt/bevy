@@ -603,7 +603,7 @@ impl PrepassPipeline {
             },
             depth_stencil: Some(DepthStencilState {
                 format: CORE_3D_DEPTH_FORMAT,
-                depth_write_enabled: true,
+                depth_write_enabled: material_properties.depth_write,
                 depth_compare: CompareFunction::GreaterEqual,
                 stencil: StencilState {
                     front: StencilFaceState::IGNORE,

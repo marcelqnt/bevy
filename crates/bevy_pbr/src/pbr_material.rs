@@ -672,6 +672,13 @@ pub struct StandardMaterial {
     /// See [`AlphaMode`] for details. Defaults to [`AlphaMode::Opaque`].
     pub alpha_mode: AlphaMode,
 
+    /// Whether draw calls using this material write to the view and shadow depth buffers.
+    ///
+    /// When `None`, transparent alpha modes ([`AlphaMode::Blend`], [`AlphaMode::Premultiplied`],
+    /// [`AlphaMode::Add`], [`AlphaMode::Multiply`]) do not write depth; all other alpha modes do.
+    /// When `Some(true)` or `Some(false)`, overrides that default regardless of [`Self::alpha_mode`].
+    pub depth_write: Option<bool>,
+
     /// Adjust rendered depth.
     ///
     /// A material with a positive depth bias will render closer to the
@@ -679,6 +686,7 @@ pub struct StandardMaterial {
     /// other objects. This is independent of the viewport.
     ///
     /// `depth_bias` adjusts depth write operations using the `wgpu::DepthBiasState::Constant` field.
+    /// Whether depth is written at all is controlled by [`Self::depth_write`].
     /// Transparent render order is controlled by [`bevy_mesh::Mesh::transparent_sort_offset`].
     ///
     /// [z-fighting]: https://en.wikipedia.org/wiki/Z-fighting
@@ -922,6 +930,7 @@ impl Default for StandardMaterial {
             unlit: false,
             fog_enabled: true,
             alpha_mode: AlphaMode::Opaque,
+            depth_write: None,
             depth_bias: 0.0,
             depth_map: None,
             parallax_depth_scale: 0.1,
@@ -1398,6 +1407,16 @@ impl Material for StandardMaterial {
     #[inline]
     fn depth_bias(&self) -> f32 {
         self.depth_bias
+    }
+
+    #[inline]
+    fn depth_write(&self) -> bool {
+        self.depth_write.unwrap_or_else(|| {
+            !matches!(
+                self.alpha_mode,
+                AlphaMode::Blend | AlphaMode::Premultiplied | AlphaMode::Add | AlphaMode::Multiply,
+            )
+        })
     }
 
     #[inline]

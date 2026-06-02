@@ -321,6 +321,10 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
         B::depth_bias(&self.base)
     }
 
+    fn depth_write(&self) -> bool {
+        B::depth_write(&self.base)
+    }
+
     fn reads_view_transmission_texture(&self) -> bool {
         B::reads_view_transmission_texture(&self.base)
     }

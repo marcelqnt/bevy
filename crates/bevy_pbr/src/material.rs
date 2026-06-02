@@ -171,6 +171,14 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
     }
 
     #[inline]
+    /// Whether draw calls using this material write to the view and shadow depth buffers.
+    ///
+    /// This is independent of [`Self::alpha_mode`] and blend state. Defaults to `true`.
+    fn depth_write(&self) -> bool {
+        true
+    }
+
+    #[inline]
     /// Returns whether the material would like to read from [`ViewTransmissionTexture`](bevy_core_pipeline::core_3d::ViewTransmissionTexture).
     ///
     /// This allows taking color output from the [`Opaque3d`] pass as an input, (for screen-space transmission) but requires
@@ -1489,7 +1497,6 @@ impl Default for ErasedMaterialKey {
 }
 
 /// Common [`Material`] properties, calculated for a specific material instance.
-#[derive(Default)]
 pub struct MaterialProperties {
     /// Is this material should be rendered by the deferred renderer when.
     /// [`AlphaMode::Opaque`] or [`AlphaMode::Mask`]
@@ -1504,6 +1511,8 @@ pub struct MaterialProperties {
     /// Bias applied to depth writes via `wgpu::DepthBiasState::Constant` to reduce z-fighting.
     /// The bias is in depth-texture units so large values may be needed to overcome small depth differences.
     pub depth_bias: f32,
+    /// Whether draw calls using this material write to the view and shadow depth buffers.
+    pub depth_write: bool,
     /// Whether the material would like to read from [`ViewTransmissionTexture`](bevy_core_pipeline::core_3d::ViewTransmissionTexture).
     ///
     /// This allows taking color output from the [`Opaque3d`] pass as an input, (for screen-space transmission) but requires
@@ -1534,6 +1543,28 @@ pub struct MaterialProperties {
     pub shadows_enabled: bool,
     /// Whether prepass is enabled for this material
     pub prepass_enabled: bool,
+}
+
+impl Default for MaterialProperties {
+    fn default() -> Self {
+        Self {
+            render_method: Default::default(),
+            alpha_mode: Default::default(),
+            mesh_pipeline_key_bits: MeshPipelineKey::DEPTH_WRITE,
+            depth_bias: Default::default(),
+            depth_write: true,
+            reads_view_transmission_texture: Default::default(),
+            render_phase_type: Default::default(),
+            material_layout: Default::default(),
+            draw_functions: Default::default(),
+            shaders: Default::default(),
+            bindless: Default::default(),
+            specialize: Default::default(),
+            material_key: Default::default(),
+            shadows_enabled: Default::default(),
+            prepass_enabled: Default::default(),
+        }
+    }
 }
 
 impl MaterialProperties {
@@ -1667,11 +1698,14 @@ where
             OpaqueRendererMethod::Auto => default_opaque_render_method.0,
         };
 
+        let depth_write = material.depth_write();
+
         let mut mesh_pipeline_key_bits = MeshPipelineKey::empty();
         mesh_pipeline_key_bits.set(
             MeshPipelineKey::READS_VIEW_TRANSMISSION_TEXTURE,
             material.reads_view_transmission_texture(),
         );
+        mesh_pipeline_key_bits.set(MeshPipelineKey::DEPTH_WRITE, depth_write);
 
         let reads_view_transmission_texture =
             mesh_pipeline_key_bits.contains(MeshPipelineKey::READS_VIEW_TRANSMISSION_TEXTURE);
@@ -1803,6 +1837,7 @@ where
                     properties: Arc::new(MaterialProperties {
                         alpha_mode: material.alpha_mode(),
                         depth_bias: material.depth_bias(),
+                        depth_write,
                         reads_view_transmission_texture,
                         render_phase_type,
                         render_method,
@@ -1842,6 +1877,7 @@ where
                             properties: Arc::new(MaterialProperties {
                                 alpha_mode: material.alpha_mode(),
                                 depth_bias: material.depth_bias(),
+                                depth_write,
                                 reads_view_transmission_texture,
                                 render_phase_type,
                                 render_method,

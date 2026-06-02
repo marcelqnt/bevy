@@ -1870,6 +1870,9 @@ pub fn specialize_shadows(
                     // If the material is not a shadow caster, we don't need to specialize it.
                     continue;
                 }
+                if !material.properties.depth_write {
+                    continue;
+                }
                 if !mesh_instance
                     .flags
                     .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
