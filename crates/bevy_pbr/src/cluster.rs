@@ -66,7 +66,8 @@ pub struct GpuClusterableObject {
     pub(crate) soft_shadow_size: f32,
     pub(crate) shadow_map_near_z: f32,
     pub(crate) decal_index: u32,
-    pub(crate) pad: f32,
+    /// xyz = bar light segment vector, w = squared length.
+    pub(crate) bar_light_data: Vec4,
     pub(crate) mask: u32,
 }
 

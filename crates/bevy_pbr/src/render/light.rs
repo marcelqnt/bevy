@@ -83,6 +83,7 @@ pub struct ExtractedPointLight {
     pub soft_shadows_enabled: bool,
     /// whether this point light contributes diffuse light to lightmapped meshes
     pub affects_lightmapped_mesh_diffuse: bool,
+    pub bar_light_length: Option<Vec3>,
     pub mask: u32,
 }
 
@@ -118,6 +119,7 @@ bitflags::bitflags! {
         const SPOT_LIGHT_Y_NEGATIVE             = 1 << 1;
         const VOLUMETRIC                        = 1 << 2;
         const AFFECTS_LIGHTMAPPED_MESH_DIFFUSE  = 1 << 3;
+        const BAR_LIGHT                         = 1 << 4;
         const NONE                              = 0;
         const UNINITIALIZED                     = 0xFFFF;
     }
@@ -435,6 +437,7 @@ pub fn extract_lights(
             spot_light_angles: None,
             volumetric: volumetric_light.is_some(),
             affects_lightmapped_mesh_diffuse: point_light.affects_lightmapped_mesh_diffuse,
+            bar_light_length: None,
             #[cfg(feature = "experimental_pbr_pcss")]
             soft_shadows_enabled: point_light.soft_shadows_enabled,
             #[cfg(not(feature = "experimental_pbr_pcss"))]
@@ -502,6 +505,7 @@ pub fn extract_lights(
                         volumetric: volumetric_light.is_some(),
                         affects_lightmapped_mesh_diffuse: spot_light
                             .affects_lightmapped_mesh_diffuse,
+                        bar_light_length: None,
                         #[cfg(feature = "experimental_pbr_pcss")]
                         soft_shadows_enabled: spot_light.soft_shadows_enabled,
                         #[cfg(not(feature = "experimental_pbr_pcss"))]
@@ -555,6 +559,7 @@ pub fn extract_lights(
                         volumetric: volumetric_light.is_some(),
                         affects_lightmapped_mesh_diffuse: spot_light
                             .affects_lightmapped_mesh_diffuse,
+                        bar_light_length: Some(bar_light.length),
                         #[cfg(feature = "experimental_pbr_pcss")]
                         soft_shadows_enabled: spot_light.soft_shadows_enabled,
                         #[cfg(not(feature = "experimental_pbr_pcss"))]
@@ -985,6 +990,9 @@ pub fn prepare_lights(
         if light.affects_lightmapped_mesh_diffuse {
             flags |= PointLightFlags::AFFECTS_LIGHTMAPPED_MESH_DIFFUSE;
         }
+        if light.bar_light_length.is_some() {
+            flags |= PointLightFlags::BAR_LIGHT;
+        }
 
         let (light_custom_data, spot_light_tan_angle) = match light.spot_light_angles {
             Some((inner, outer)) => {
@@ -1037,7 +1045,10 @@ pub fn prepare_lights(
                 .and_then(|decals| decals.get(entity))
                 .and_then(|index| index.try_into().ok())
                 .unwrap_or(u32::MAX),
-            pad: 0.0,
+            bar_light_data: light
+                .bar_light_length
+                .map(|length| length.extend(length.length_squared()))
+                .unwrap_or_default(),
             mask: light.mask,
             soft_shadow_size: if light.soft_shadows_enabled {
                 light.radius
