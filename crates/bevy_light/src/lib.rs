@@ -45,6 +45,8 @@ pub use spot_light::{
     orthonormalize, spot_light_clip_from_view, spot_light_world_from_view,
     update_spot_light_frusta, SpotLight, SpotLightTexture,
 };
+mod bar_light;
+pub use bar_light::{update_bar_light_frusta, BarLight};
 mod directional_light;
 pub use directional_light::{
     update_directional_light_frusta, DirectionalLight, DirectionalLightShadowMap,
@@ -58,7 +60,7 @@ pub mod prelude {
     #[doc(hidden)]
     pub use crate::{
         light_consts, AmbientLight, DirectionalLight, EnvironmentMapLight,
-        GeneratedEnvironmentMapLight, LightProbe, PointLight, SpotLight,
+        GeneratedEnvironmentMapLight, LightProbe, PointLight, SpotLight, BarLight,
     };
 }
 
@@ -171,12 +173,17 @@ impl Plugin for LightPlugin {
                         // We assume that no entity will be both a directional light and a spot light,
                         // so these systems will run independently of one another.
                         // FIXME: Add an archetype invariant for this https://github.com/bevyengine/bevy/issues/1481.
-                        .ambiguous_with(update_spot_light_frusta),
+                        .ambiguous_with(update_spot_light_frusta)
+                        .ambiguous_with(update_bar_light_frusta),
                     update_point_light_frusta
                         .in_set(SimulationLightSystems::UpdateLightFrusta)
                         .after(TransformSystems::Propagate)
                         .after(SimulationLightSystems::AssignLightsToClusters),
                     update_spot_light_frusta
+                        .in_set(SimulationLightSystems::UpdateLightFrusta)
+                        .after(TransformSystems::Propagate)
+                        .after(SimulationLightSystems::AssignLightsToClusters),
+                    update_bar_light_frusta
                         .in_set(SimulationLightSystems::UpdateLightFrusta)
                         .after(TransformSystems::Propagate)
                         .after(SimulationLightSystems::AssignLightsToClusters),
@@ -203,7 +210,7 @@ impl Plugin for LightPlugin {
 
 /// A convenient alias for `Or<(With<PointLight>, With<SpotLight>,
 /// With<DirectionalLight>)>`, for use with [`bevy_camera::visibility::VisibleEntities`].
-pub type WithLight = Or<(With<PointLight>, With<SpotLight>, With<DirectionalLight>)>;
+pub type WithLight = Or<(With<PointLight>, With<SpotLight>, With<BarLight>, With<DirectionalLight>)>;
 
 /// Add this component to make a [`Mesh3d`] not cast shadows.
 #[derive(Debug, Component, Reflect, Default, Clone, PartialEq)]
