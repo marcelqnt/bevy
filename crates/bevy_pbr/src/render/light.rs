@@ -25,7 +25,7 @@ use bevy_light::cluster::GlobalVisibleClusterableObjects;
 use bevy_light::SunDisk;
 use bevy_light::{
     spot_light_clip_from_view, spot_light_world_from_view, AmbientLight, CascadeShadowConfig,
-    Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster, PointLight,
+    BarLight, Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster, PointLight,
     PointLightShadowMap, ShadowFilteringMethod, SpotLight, VolumetricLight,
 };
 use bevy_math::{ops, Mat4, UVec4, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
@@ -320,6 +320,18 @@ pub fn extract_lights(
             Option<&VolumetricLight>,
         )>,
     >,
+    bar_lights: Extract<
+        Query<(
+            Entity,
+            RenderEntity,
+            &BarLight,
+            &VisibleMeshEntities,
+            &GlobalTransform,
+            &ViewVisibility,
+            &Frustum,
+            Option<&VolumetricLight>,
+        )>,
+    >,
     directional_lights: Extract<
         Query<
             (
@@ -482,6 +494,59 @@ pub fn extract_lights(
                         shadows_enabled: spot_light.shadows_enabled,
                         shadow_depth_bias: spot_light.shadow_depth_bias,
                         // The factor of SQRT_2 is for the worst-case diagonal offset
+                        shadow_normal_bias: spot_light.shadow_normal_bias
+                            * texel_size
+                            * core::f32::consts::SQRT_2,
+                        shadow_map_near_z: spot_light.shadow_map_near_z,
+                        spot_light_angles: Some((spot_light.inner_angle, spot_light.outer_angle)),
+                        volumetric: volumetric_light.is_some(),
+                        affects_lightmapped_mesh_diffuse: spot_light
+                            .affects_lightmapped_mesh_diffuse,
+                        #[cfg(feature = "experimental_pbr_pcss")]
+                        soft_shadows_enabled: spot_light.soft_shadows_enabled,
+                        #[cfg(not(feature = "experimental_pbr_pcss"))]
+                        soft_shadows_enabled: false,
+                        mask: spot_light.mask,
+                    },
+                    render_visible_entities,
+                    *frustum,
+                    MainEntity::from(main_entity),
+                ),
+            ));
+        }
+
+        if let Ok((
+            main_entity,
+            render_entity,
+            bar_light,
+            visible_entities,
+            transform,
+            view_visibility,
+            frustum,
+            volumetric_light,
+        )) = bar_lights.get(entity)
+        {
+            if !view_visibility.get() {
+                continue;
+            }
+            let render_visible_entities =
+                create_render_visible_mesh_entities(&mapper, visible_entities);
+
+            let texel_size = 2.0 * ops::tan(bar_light.spot_light.outer_angle)
+                / directional_light_shadow_map.size as f32;
+
+            let spot_light = &bar_light.spot_light;
+            spot_lights_values.push((
+                render_entity,
+                (
+                    ExtractedPointLight {
+                        color: spot_light.color.into(),
+                        intensity: spot_light.intensity / (4.0 * core::f32::consts::PI),
+                        range: spot_light.range,
+                        radius: spot_light.radius,
+                        transform: *transform,
+                        shadows_enabled: spot_light.shadows_enabled,
+                        shadow_depth_bias: spot_light.shadow_depth_bias,
                         shadow_normal_bias: spot_light.shadow_normal_bias
                             * texel_size
                             * core::f32::consts::SQRT_2,

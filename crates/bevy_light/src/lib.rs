@@ -313,7 +313,7 @@ pub fn check_dir_light_mesh_visibility(
             Option<&RenderLayers>,
             &ViewVisibility,
         ),
-        Without<SpotLight>,
+        (Without<SpotLight>, Without<BarLight>),
     >,
     visible_entity_query: Query<
         (
@@ -492,7 +492,14 @@ pub fn check_point_light_mesh_visibility(
         &Frustum,
         &mut VisibleMeshEntities,
         Option<&RenderLayers>,
-    )>,
+    ), Without<BarLight>>,
+    mut bar_lights: Query<(
+        &BarLight,
+        &GlobalTransform,
+        &Frustum,
+        &mut VisibleMeshEntities,
+        Option<&RenderLayers>,
+    ), Without<SpotLight>>,
     mut visible_entity_query: Query<
         (
             Entity,
@@ -709,6 +716,87 @@ pub fn check_point_light_mesh_visibility(
 
                     // Remove any entities that were discovered to be visible
                     // from the `PreviousVisibleEntities` resource.
+                    for entity in entities {
+                        previous_visible_entities.remove(entity);
+                    }
+                }
+
+                shrink_entities(visible_entities.deref_mut());
+            }
+
+            // Bar lights (currently treated like spot lights for rendering path validation)
+            if let Ok((bar_light, transform, frustum, mut visible_entities, maybe_view_mask)) =
+                bar_lights.get_mut(light_entity)
+            {
+                visible_entities.clear();
+
+                if !bar_light.spot_light.shadows_enabled {
+                    continue;
+                }
+
+                let view_mask = maybe_view_mask.unwrap_or_default();
+                let light_sphere = Sphere {
+                    center: Vec3A::from(transform.translation()),
+                    radius: bar_light.spot_light.range,
+                };
+
+                visible_entity_query.par_iter_mut().for_each_init(
+                    || spot_visible_entities_queue.borrow_local_mut(),
+                    |spot_visible_entities_local_queue,
+                     (
+                        entity,
+                        inherited_visibility,
+                        mut view_visibility,
+                        maybe_entity_mask,
+                        maybe_aabb,
+                        maybe_transform,
+                        has_visibility_range,
+                        has_no_frustum_culling,
+                    )| {
+                        if !inherited_visibility.get() {
+                            return;
+                        }
+
+                        let entity_mask = maybe_entity_mask.unwrap_or_default();
+                        if !view_mask.intersects(entity_mask) {
+                            return;
+                        }
+                        if has_visibility_range
+                            && visible_entity_ranges.is_some_and(|visible_entity_ranges| {
+                                !visible_entity_ranges.entity_is_in_range_of_any_view(entity)
+                            })
+                        {
+                            return;
+                        }
+
+                        if let (Some(aabb), Some(transform)) = (maybe_aabb, maybe_transform) {
+                            let model_to_world = transform.affine();
+                            if !has_no_frustum_culling
+                                && !light_sphere.intersects_obb(aabb, &model_to_world)
+                            {
+                                return;
+                            }
+
+                            if has_no_frustum_culling
+                                || frustum.intersects_obb(aabb, &model_to_world, true, true)
+                            {
+                                if !**view_visibility {
+                                    view_visibility.set();
+                                }
+                                spot_visible_entities_local_queue.push(entity);
+                            }
+                        } else {
+                            if !**view_visibility {
+                                view_visibility.set();
+                            }
+                            spot_visible_entities_local_queue.push(entity);
+                        }
+                    },
+                );
+
+                for entities in spot_visible_entities_queue.iter_mut() {
+                    visible_entities.append(entities);
+
                     for entity in entities {
                         previous_visible_entities.remove(entity);
                     }

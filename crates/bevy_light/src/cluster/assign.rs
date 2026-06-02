@@ -22,7 +22,7 @@ use super::{
     ClusterConfig, ClusterFarZMode, ClusteredDecal, Clusters, GlobalClusterSettings,
     GlobalVisibleClusterableObjects, VisibleClusterableObjects,
 };
-use crate::{EnvironmentMapLight, LightProbe, PointLight, SpotLight, VolumetricLight};
+use crate::{BarLight, EnvironmentMapLight, LightProbe, PointLight, SpotLight, VolumetricLight};
 
 const NDC_MIN: Vec2 = Vec2::NEG_ONE;
 const NDC_MAX: Vec2 = Vec2::ONE;
@@ -150,6 +150,14 @@ pub(crate) fn assign_objects_to_clusters(
         Option<&VolumetricLight>,
         &ViewVisibility,
     )>,
+    bar_lights_query: Query<(
+        Entity,
+        &GlobalTransform,
+        &BarLight,
+        Option<&RenderLayers>,
+        Option<&VolumetricLight>,
+        &ViewVisibility,
+    )>,
     light_probes_query: Query<
         (Entity, &GlobalTransform, Has<EnvironmentMapLight>),
         With<LightProbe>,
@@ -199,6 +207,26 @@ pub(crate) fn assign_objects_to_clusters(
                         object_type: ClusterableObjectType::SpotLight {
                             outer_angle: spot_light.outer_angle,
                             shadows_enabled: spot_light.shadows_enabled,
+                            volumetric: volumetric.is_some(),
+                        },
+                        render_layers: maybe_layers.unwrap_or_default().clone(),
+                    }
+                },
+            ),
+    );
+    clusterable_objects.extend(
+        bar_lights_query
+            .iter()
+            .filter(|(.., visibility)| visibility.get())
+            .map(
+                |(entity, transform, bar_light, maybe_layers, volumetric, _visibility)| {
+                    ClusterableObjectAssignmentData {
+                        entity,
+                        transform: *transform,
+                        range: bar_light.spot_light.range,
+                        object_type: ClusterableObjectType::SpotLight {
+                            outer_angle: bar_light.spot_light.outer_angle,
+                            shadows_enabled: bar_light.spot_light.shadows_enabled,
                             volumetric: volumetric.is_some(),
                         },
                         render_layers: maybe_layers.unwrap_or_default().clone(),
