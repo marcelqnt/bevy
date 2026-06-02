@@ -755,24 +755,8 @@ fn spot_light(
     if ((*light).flags & POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE) != 0u {
         spot_dir.y = -spot_dir.y;
     }
-    let is_bar_light = ((*light).flags & POINT_LIGHT_FLAGS_BAR_LIGHT_BIT) != 0u;
+    let cone_light_to_frag = (*light).position_radius.xyz - (*input).P.xyz;
 
-    // Default: regular spot light uses the light's position.
-    var cone_light_to_frag = (*light).position_radius.xyz - (*input).P.xyz;
-    if (is_bar_light) {
-        // For bar lights, position is the segment center, and bar_light_data.xyz is
-        // the segment vector from one end to the other.
-        let bar_length = (*light).bar_light_data.xyz;
-        let bar_length_sq = max((*light).bar_light_data.w, 1e-6);
-        let bar_start = (*light).position_radius.xyz - 0.5 * bar_length;
-        let bar_to_frag = (*input).P.xyz - bar_start;
-        let t = saturate(dot(bar_to_frag, bar_length) / bar_length_sq);
-        let closest_on_bar = bar_start + t * bar_length;
-        cone_light_to_frag = closest_on_bar - (*input).P.xyz;
-    }
-
-    // Reuse point light BRDF terms, but with the segment-closest emitter position
-    // for bar lights.
     let point_light = point_light_with_light_to_frag(
         light_id,
         input,
@@ -780,6 +764,52 @@ fn spot_light(
         false,
         cone_light_to_frag,
     );
+
+    // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
+    // spot_scale and spot_offset have been precomputed
+    // note we normalize here to get "l" from the filament listing. spot_dir is already normalized
+    let cd = dot(-spot_dir, normalize(cone_light_to_frag));
+    let attenuation = saturate(cd * (*light).light_custom_data.z + (*light).light_custom_data.w);
+    let spot_attenuation = attenuation * attenuation;
+
+    var texture_sample = 1f;
+
+#ifdef LIGHT_TEXTURES
+    if (*light).decal_index != 0xFFFFFFFFu {
+        let local_position = (view_bindings::clustered_decals.decals[(*light).decal_index].local_from_world *
+            vec4((*input).P, 1.0)).xyz;
+        if local_position.z < 0.0 {
+            let decal_uv = (local_position.xy / (local_position.z * (*light).spot_light_tan_angle)) * vec2(-0.5, 0.5) + 0.5;
+            let image_index = view_bindings::clustered_decals.decals[(*light).decal_index].image_index;
+
+            texture_sample = textureSampleLevel(
+                view_bindings::clustered_decal_textures[image_index],
+                view_bindings::clustered_decal_sampler,
+                decal_uv,
+                0.0
+            ).r;
+        }
+    }
+#endif
+
+    return point_light * spot_attenuation * texture_sample;
+}
+
+fn bar_light(
+    light_id: u32,
+    input: ptr<function, LightingInput>,
+    enable_diffuse: bool
+) -> vec3<f32> {
+    let light = &view_bindings::clusterable_objects.data[light_id];
+
+    // reconstruct spot dir from x/z and y-direction flag
+    var spot_dir = vec3<f32>((*light).light_custom_data.x, 0.0, (*light).light_custom_data.y);
+    spot_dir.y = sqrt(max(0.0, 1.0 - spot_dir.x * spot_dir.x - spot_dir.z * spot_dir.z));
+    if ((*light).flags & POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE) != 0u {
+        spot_dir.y = -spot_dir.y;
+    }
+    let cone_light_to_frag = (*light).position_radius.xyz - (*input).P.xyz;
+    let point_light = point_light_with_light_to_frag(light_id, input, enable_diffuse, false, cone_light_to_frag);
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
     // spot_scale and spot_offset have been precomputed

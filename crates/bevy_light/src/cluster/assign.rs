@@ -84,6 +84,16 @@ pub enum ClusterableObjectType {
         outer_angle: f32,
     },
 
+    /// Data needed to assign bar lights to clusters.
+    BarLight {
+        /// Whether shadows are enabled for this bar light.
+        shadows_enabled: bool,
+        /// Whether this light interacts with volumetrics.
+        volumetric: bool,
+        /// The outer angle of the underlying spot cone in radians.
+        outer_angle: f32,
+    },
+
     /// Marks that the clusterable object is a reflection probe.
     ReflectionProbe,
 
@@ -113,9 +123,14 @@ impl ClusterableObjectType {
                 volumetric,
                 ..
             } => (1, !shadows_enabled, !volumetric),
-            ClusterableObjectType::ReflectionProbe => (2, false, false),
-            ClusterableObjectType::IrradianceVolume => (3, false, false),
-            ClusterableObjectType::Decal => (4, false, false),
+            ClusterableObjectType::BarLight {
+                shadows_enabled,
+                volumetric,
+                ..
+            } => (2, !shadows_enabled, !volumetric),
+            ClusterableObjectType::ReflectionProbe => (3, false, false),
+            ClusterableObjectType::IrradianceVolume => (4, false, false),
+            ClusterableObjectType::Decal => (5, false, false),
         }
     }
 }
@@ -224,7 +239,7 @@ pub(crate) fn assign_objects_to_clusters(
                         entity,
                         transform: *transform,
                         range: bar_light.spot_light.range,
-                        object_type: ClusterableObjectType::SpotLight {
+                        object_type: ClusterableObjectType::BarLight {
                             outer_angle: bar_light.spot_light.outer_angle,
                             shadows_enabled: bar_light.spot_light.shadows_enabled,
                             volumetric: volumetric.is_some(),
@@ -626,7 +641,8 @@ pub(crate) fn assign_objects_to_clusters(
                     radius: clusterable_object_sphere.radius * view_from_world_scale_max,
                 };
                 let spot_light_dir_sin_cos = match clusterable_object.object_type {
-                    ClusterableObjectType::SpotLight { outer_angle, .. } => {
+                    ClusterableObjectType::SpotLight { outer_angle, .. }
+                    | ClusterableObjectType::BarLight { outer_angle, .. } => {
                         let (angle_sin, angle_cos) = sin_cos(outer_angle);
                         Some((
                             (view_from_world * clusterable_object.transform.back().extend(0.0))
@@ -799,6 +815,63 @@ pub(crate) fn assign_objects_to_clusters(
                                         clusters.clusterable_objects[cluster_index]
                                             .counts
                                             .spot_lights += 1;
+                                    }
+                                    cluster_index += clusters.dimensions.z as usize;
+                                }
+                            }
+                            ClusterableObjectType::BarLight { .. } => {
+                                let (view_light_direction, angle_sin, angle_cos) =
+                                    spot_light_dir_sin_cos.unwrap();
+                                for x in min_x..=max_x {
+                                    let cluster_aabb_sphere =
+                                        &mut cluster_aabb_spheres[cluster_index];
+                                    let cluster_aabb_sphere =
+                                        if let Some(sphere) = cluster_aabb_sphere {
+                                            &*sphere
+                                        } else {
+                                            let aabb = compute_aabb_for_cluster(
+                                                first_slice_depth,
+                                                far_z,
+                                                clusters.tile_size.as_vec2(),
+                                                screen_size.as_vec2(),
+                                                view_from_clip,
+                                                is_orthographic,
+                                                clusters.dimensions,
+                                                UVec3::new(x, y, z),
+                                            );
+                                            let sphere = Sphere {
+                                                center: aabb.center,
+                                                radius: aabb.half_extents.length(),
+                                            };
+                                            *cluster_aabb_sphere = Some(sphere);
+                                            cluster_aabb_sphere.as_ref().unwrap()
+                                        };
+
+                                    let spot_light_offset = Vec3::from(
+                                        view_clusterable_object_sphere.center
+                                            - cluster_aabb_sphere.center,
+                                    );
+                                    let spot_light_dist_sq = spot_light_offset.length_squared();
+                                    let v1_len = spot_light_offset.dot(view_light_direction);
+
+                                    let distance_closest_point = (angle_cos
+                                        * (spot_light_dist_sq - v1_len * v1_len).sqrt())
+                                        - v1_len * angle_sin;
+                                    let angle_cull =
+                                        distance_closest_point > cluster_aabb_sphere.radius;
+
+                                    let front_cull = v1_len
+                                        > cluster_aabb_sphere.radius
+                                            + clusterable_object.range * view_from_world_scale_max;
+                                    let back_cull = v1_len < -cluster_aabb_sphere.radius;
+
+                                    if !angle_cull && !front_cull && !back_cull {
+                                        clusters.clusterable_objects[cluster_index]
+                                            .entities
+                                            .push(clusterable_object.entity);
+                                        clusters.clusterable_objects[cluster_index]
+                                            .counts
+                                            .bar_lights += 1;
                                     }
                                     cluster_index += clusters.dimensions.z as usize;
                                 }

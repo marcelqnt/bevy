@@ -397,9 +397,14 @@ impl ViewClusterBindings {
                         offset as u32,
                         counts.point_lights,
                         counts.spot_lights,
-                        counts.reflection_probes,
+                        counts.bar_lights,
                     ),
-                    uvec4(counts.irradiance_volumes, counts.decals, 0, 0),
+                    uvec4(
+                        counts.reflection_probes,
+                        counts.irradiance_volumes,
+                        counts.decals,
+                        0,
+                    ),
                 ]);
             }
         }

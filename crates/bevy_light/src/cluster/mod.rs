@@ -137,6 +137,8 @@ pub struct ClusterableObjectCounts {
     pub point_lights: u32,
     /// The number of spot lights in the cluster.
     pub spot_lights: u32,
+    /// The number of bar lights in the cluster.
+    pub bar_lights: u32,
     /// The number of reflection probes in the cluster.
     pub reflection_probes: u32,
     /// The number of irradiance volumes in the cluster.
