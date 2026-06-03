@@ -22,7 +22,7 @@ use crate::{spot_light_clip_from_view, spot_light_world_from_view, SpotLight};
 pub struct BarLight {
     /// Base spot-light parameters used for range, intensity, cone angles and shadows.
     pub spot_light: SpotLight,
-    /// Vector describing the bar's orientation and length in world units.
+    /// Vector describing the bar's orientation and length in the light's local space.
     pub length: Vec3,
 }
 

@@ -994,7 +994,7 @@ pub fn prepare_lights(
             flags |= PointLightFlags::BAR_LIGHT;
         }
 
-        let (light_custom_data, spot_light_tan_angle) = match light.spot_light_angles {
+        let (light_custom_data, spot_light_tan_angle, bar_light_data) = match light.spot_light_angles {
             Some((inner, outer)) => {
                 let light_direction = light.transform.forward();
                 if light_direction.y.is_sign_negative() {
@@ -1005,10 +1005,19 @@ pub fn prepare_lights(
                 let spot_scale = 1.0 / f32::max(ops::cos(inner) - cos_outer, 1e-4);
                 let spot_offset = -cos_outer * spot_scale;
 
+                let bar_light_data = light
+                    .bar_light_length
+                    .map(|length| {
+                        let world_length = light.transform.affine().transform_vector3(length);
+                        world_length.extend(world_length.length_squared())
+                    })
+                    .unwrap_or_default();
+
                 (
                     // For spot lights: the direction (x,z), spot_scale and spot_offset
                     light_direction.xz().extend(spot_scale).extend(spot_offset),
                     ops::tan(outer),
+                    bar_light_data,
                 )
             }
             None => {
@@ -1022,6 +1031,7 @@ pub fn prepare_lights(
                     ),
                     // unused
                     0.0,
+                    Vec4::ZERO,
                 )
             }
         };
@@ -1045,10 +1055,7 @@ pub fn prepare_lights(
                 .and_then(|decals| decals.get(entity))
                 .and_then(|index| index.try_into().ok())
                 .unwrap_or(u32::MAX),
-            bar_light_data: light
-                .bar_light_length
-                .map(|length| length.extend(length.length_squared()))
-                .unwrap_or_default(),
+            bar_light_data,
             mask: light.mask,
             soft_shadow_size: if light.soft_shadows_enabled {
                 light.radius
