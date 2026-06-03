@@ -808,8 +808,33 @@ fn bar_light(
     if ((*light).flags & POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE) != 0u {
         spot_dir.y = -spot_dir.y;
     }
-    let cone_light_to_frag = (*light).position_radius.xyz - (*input).P.xyz;
-    let point_light = point_light_with_light_to_frag(light_id, input, enable_diffuse, false, cone_light_to_frag);
+
+    // Old GLSL-style bar geometry:
+    // position_radius.xyz is the bar center, bar_light_data.xyz is the full segment vector.
+    let along = (*light).bar_light_data.xyz;
+    let along_len_sq = max((*light).bar_light_data.w, 1e-8);
+    let bar_start = (*light).position_radius.xyz - 0.5 * along;
+
+    // dist1/dist2 map directly to the old shader's LightVecs + along.
+    let dist1 = bar_start - (*input).P.xyz;
+    let dist2 = dist1 + along;
+
+    let s1 = dist1 * inverseSqrt(max(dot(dist1, dist1), 1e-8));
+    let s2 = dist2 * inverseSqrt(max(dot(dist2, dist2), 1e-8));
+    let along_norm = along * inverseSqrt(along_len_sq);
+
+    var dist_med: vec3<f32>;
+    if ((dot(s1, along) > 0.0) && (dot(s2, along) > 0.0)) {
+        dist_med = dist1;
+    } else if ((dot(s1, along) < 0.0) && (dot(s2, along) < 0.0)) {
+        dist_med = dist2;
+    } else {
+        dist_med = dist1 - along_norm * dot(dist1, along_norm);
+    }
+
+    let cone_light_to_frag = dist_med;
+    let point_light =
+        point_light_with_light_to_frag(light_id, input, enable_diffuse, false, cone_light_to_frag);
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
     // spot_scale and spot_offset have been precomputed
