@@ -85,6 +85,7 @@ pub struct ExtractedPointLight {
     pub affects_lightmapped_mesh_diffuse: bool,
     pub bar_light_length: Option<Vec3>,
     pub mask: u32,
+    pub ambient_minimum: f32,
 }
 
 #[derive(Component, Debug)]
@@ -123,6 +124,11 @@ bitflags::bitflags! {
         const NONE                              = 0;
         const UNINITIALIZED                     = 0xFFFF;
     }
+}
+
+fn pack_clusterable_ambient_minimum(flags: PointLightFlags, ambient_minimum: f32) -> u32 {
+    let ambient_bits = (ambient_minimum.clamp(0.0, 1.0) * 255.0).round() as u32;
+    flags.bits() | (ambient_bits << 8)
 }
 
 #[derive(Copy, Clone, ShaderType, Default, Debug)]
@@ -443,6 +449,7 @@ pub fn extract_lights(
             #[cfg(not(feature = "experimental_pbr_pcss"))]
             soft_shadows_enabled: false,
             mask: point_light.mask,
+            ambient_minimum: point_light.ambient_minimum,
         };
         point_lights_values.push((
             render_entity,
@@ -511,6 +518,7 @@ pub fn extract_lights(
                         #[cfg(not(feature = "experimental_pbr_pcss"))]
                         soft_shadows_enabled: false,
                         mask: spot_light.mask,
+                        ambient_minimum: spot_light.ambient_minimum,
                     },
                     render_visible_entities,
                     *frustum,
@@ -565,6 +573,7 @@ pub fn extract_lights(
                         #[cfg(not(feature = "experimental_pbr_pcss"))]
                         soft_shadows_enabled: false,
                         mask: spot_light.mask,
+                        ambient_minimum: spot_light.ambient_minimum,
                     },
                     render_visible_entities,
                     *frustum,
@@ -1045,7 +1054,7 @@ pub fn prepare_lights(
                 .xyz()
                 .extend(1.0 / (light.range * light.range)),
             position_radius: light.transform.translation().extend(light.radius),
-            flags: flags.bits(),
+            flags: pack_clusterable_ambient_minimum(flags, light.ambient_minimum),
             shadow_depth_bias: light.shadow_depth_bias,
             shadow_normal_bias: light.shadow_normal_bias,
             shadow_map_near_z: light.shadow_map_near_z,

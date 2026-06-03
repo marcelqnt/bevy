@@ -24,6 +24,11 @@ const POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE: u32                  = 1u << 1u;
 const POINT_LIGHT_FLAGS_VOLUMETRIC_BIT: u32                         = 1u << 2u;
 const POINT_LIGHT_FLAGS_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE_BIT: u32   = 1u << 3u;
 const POINT_LIGHT_FLAGS_BAR_LIGHT_BIT: u32                          = 1u << 4u;
+// bits 8..16 encode ambient_minimum as an 8-bit normalized value in [0, 1].
+
+fn clusterable_ambient_minimum(flags: u32) -> f32 {
+    return f32((flags >> 8u) & 0xFFu) / 255.0;
+}
 
 struct DirectionalCascade {
     clip_from_world: mat4x4<f32>,

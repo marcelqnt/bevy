@@ -3,6 +3,7 @@
 #import bevy_pbr::{
     mesh_view_types::POINT_LIGHT_FLAGS_BAR_LIGHT_BIT,
     mesh_view_types::POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE,
+    mesh_view_types::clusterable_ambient_minimum,
     mesh_view_bindings as view_bindings,
 }
 #import bevy_render::maths::PI
@@ -345,6 +346,11 @@ fn derive_lighting_input(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>) -> DerivedLig
     input.NdotH = saturate(dot(N, H));
     input.LdotH = saturate(dot(L, H));
     return input;
+}
+
+// Remaps the N·L factor from [0, 1] to [ambient_minimum, 1].
+fn apply_ambient_minimum(n_dot_l: f32, ambient_minimum: f32) -> f32 {
+    return mix(ambient_minimum, 1.0, saturate(n_dot_l));
 }
 
 // Returns L in the `xyz` components and the specular intensity in the `w` component.
@@ -721,8 +727,13 @@ fn point_light_with_light_to_frag(
     }
 #endif
 
+    let n_dot_l_factor = apply_ambient_minimum(
+        derived_input.NdotL,
+        clusterable_ambient_minimum((*light).flags),
+    );
+
     return color * (*light).color_inverse_square_range.rgb *
-        (rangeAttenuation * derived_input.NdotL) * texture_sample;
+        (rangeAttenuation * n_dot_l_factor) * texture_sample;
 }
 
 fn point_light(
