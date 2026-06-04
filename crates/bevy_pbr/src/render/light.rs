@@ -86,6 +86,7 @@ pub struct ExtractedPointLight {
     pub bar_light_length: Option<Vec3>,
     pub mask: u32,
     pub ambient_minimum: f32,
+    pub cone_minimum_intensity: f32,
 }
 
 #[derive(Component, Debug)]
@@ -126,9 +127,14 @@ bitflags::bitflags! {
     }
 }
 
-fn pack_clusterable_ambient_minimum(flags: PointLightFlags, ambient_minimum: f32) -> u32 {
+fn pack_clusterable_light_flags(
+    flags: PointLightFlags,
+    ambient_minimum: f32,
+    cone_minimum_intensity: f32,
+) -> u32 {
     let ambient_bits = (ambient_minimum.clamp(0.0, 1.0) * 255.0).round() as u32;
-    flags.bits() | (ambient_bits << 8)
+    let cone_min_bits = (cone_minimum_intensity.clamp(0.0, 1.0) * 255.0).round() as u32;
+    flags.bits() | (ambient_bits << 8) | (cone_min_bits << 16)
 }
 
 #[derive(Copy, Clone, ShaderType, Default, Debug)]
@@ -450,6 +456,7 @@ pub fn extract_lights(
             soft_shadows_enabled: false,
             mask: point_light.mask,
             ambient_minimum: point_light.ambient_minimum,
+            cone_minimum_intensity: 0.0,
         };
         point_lights_values.push((
             render_entity,
@@ -519,6 +526,7 @@ pub fn extract_lights(
                         soft_shadows_enabled: false,
                         mask: spot_light.mask,
                         ambient_minimum: spot_light.ambient_minimum,
+                        cone_minimum_intensity: spot_light.cone_minimum_intensity,
                     },
                     render_visible_entities,
                     *frustum,
@@ -574,6 +582,7 @@ pub fn extract_lights(
                         soft_shadows_enabled: false,
                         mask: spot_light.mask,
                         ambient_minimum: spot_light.ambient_minimum,
+                        cone_minimum_intensity: spot_light.cone_minimum_intensity,
                     },
                     render_visible_entities,
                     *frustum,
@@ -1054,7 +1063,11 @@ pub fn prepare_lights(
                 .xyz()
                 .extend(1.0 / (light.range * light.range)),
             position_radius: light.transform.translation().extend(light.radius),
-            flags: pack_clusterable_ambient_minimum(flags, light.ambient_minimum),
+            flags: pack_clusterable_light_flags(
+                flags,
+                light.ambient_minimum,
+                light.cone_minimum_intensity,
+            ),
             shadow_depth_bias: light.shadow_depth_bias,
             shadow_normal_bias: light.shadow_normal_bias,
             shadow_map_near_z: light.shadow_map_near_z,

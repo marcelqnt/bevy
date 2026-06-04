@@ -124,6 +124,14 @@ pub struct SpotLight {
     /// `inner_angle` should be <= `outer_angle`
     pub inner_angle: f32,
 
+    /// Minimum intensity factor at the outer cone edge.
+    ///
+    /// The falloff from `inner_angle` to `outer_angle` is remapped from `[1.0, 0.0]`
+    /// to `[1.0, cone_minimum_intensity]`.
+    ///
+    /// On the GPU this value is quantized to 8 bits in `[0.0, 1.0]`.
+    pub cone_minimum_intensity: f32,
+
     pub mask: u32,
 
     /// Minimum factor for the surface normal vs. light direction term (N·L).
@@ -161,6 +169,7 @@ impl Default for SpotLight {
             shadow_map_near_z: Self::DEFAULT_SHADOW_MAP_NEAR_Z,
             inner_angle: 0.0,
             outer_angle: core::f32::consts::FRAC_PI_4,
+            cone_minimum_intensity: 0.0,
             #[cfg(feature = "experimental_pbr_pcss")]
             soft_shadows_enabled: false,
             mask: u32::MAX,

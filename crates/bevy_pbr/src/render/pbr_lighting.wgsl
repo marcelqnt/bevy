@@ -4,6 +4,8 @@
     mesh_view_types::POINT_LIGHT_FLAGS_BAR_LIGHT_BIT,
     mesh_view_types::POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE,
     mesh_view_types::clusterable_ambient_minimum,
+    mesh_view_types::clusterable_cone_minimum_intensity,
+    mesh_view_types::spot_cone_attenuation,
     mesh_view_bindings as view_bindings,
 }
 #import bevy_render::maths::PI
@@ -780,8 +782,12 @@ fn spot_light(
     // spot_scale and spot_offset have been precomputed
     // note we normalize here to get "l" from the filament listing. spot_dir is already normalized
     let cd = dot(-spot_dir, normalize(cone_light_to_frag));
-    let attenuation = saturate(cd * (*light).light_custom_data.z + (*light).light_custom_data.w);
-    let spot_attenuation = attenuation * attenuation;
+    let spot_attenuation = spot_cone_attenuation(
+        cd,
+        (*light).light_custom_data.z,
+        (*light).light_custom_data.w,
+        clusterable_cone_minimum_intensity((*light).flags),
+    );
 
     var texture_sample = 1f;
 
@@ -851,8 +857,12 @@ fn bar_light(
     // spot_scale and spot_offset have been precomputed
     // note we normalize here to get "l" from the filament listing. spot_dir is already normalized
     let cd = dot(-spot_dir, normalize(cone_light_to_frag));
-    let attenuation = saturate(cd * (*light).light_custom_data.z + (*light).light_custom_data.w);
-    let spot_attenuation = attenuation * attenuation;
+    let spot_attenuation = spot_cone_attenuation(
+        cd,
+        (*light).light_custom_data.z,
+        (*light).light_custom_data.w,
+        clusterable_cone_minimum_intensity((*light).flags),
+    );
 
     var texture_sample = 1f;
 

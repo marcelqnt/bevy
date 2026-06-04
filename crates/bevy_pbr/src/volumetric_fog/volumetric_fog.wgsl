@@ -21,7 +21,9 @@
     POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
     POINT_LIGHT_FLAGS_VOLUMETRIC_BIT,
     POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE,
-    ClusterableObject
+    ClusterableObject,
+    clusterable_cone_minimum_intensity,
+    spot_cone_attenuation,
 }
 #import bevy_pbr::shadow_sampling::{
     sample_shadow_map_hardware,
@@ -362,8 +364,12 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 // spot_scale and spot_offset have been precomputed
                 // note we normalize here to get "l" from the filament listing. spot_dir is already normalized
                 let cd = dot(-spot_dir, normalize(light_to_frag));
-                let attenuation = saturate(cd * (*light).light_custom_data.z + (*light).light_custom_data.w);
-                let spot_attenuation = attenuation * attenuation;
+                let spot_attenuation = spot_cone_attenuation(
+                    cd,
+                    (*light).light_custom_data.z,
+                    (*light).light_custom_data.w,
+                    clusterable_cone_minimum_intensity((*light).flags),
+                );
 
                 var shadow: f32 = 1.0;
                 if (((*light).flags & POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {

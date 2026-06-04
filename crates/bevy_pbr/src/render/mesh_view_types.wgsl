@@ -25,9 +25,27 @@ const POINT_LIGHT_FLAGS_VOLUMETRIC_BIT: u32                         = 1u << 2u;
 const POINT_LIGHT_FLAGS_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE_BIT: u32   = 1u << 3u;
 const POINT_LIGHT_FLAGS_BAR_LIGHT_BIT: u32                          = 1u << 4u;
 // bits 8..16 encode ambient_minimum as an 8-bit normalized value in [0, 1].
+// bits 16..24 encode cone_minimum_intensity as an 8-bit normalized value in [0, 1].
 
 fn clusterable_ambient_minimum(flags: u32) -> f32 {
     return f32((flags >> 8u) & 0xFFu) / 255.0;
+}
+
+fn clusterable_cone_minimum_intensity(flags: u32) -> f32 {
+    return f32((flags >> 16u) & 0xFFu) / 255.0;
+}
+
+// Spot/bar cone attenuation using the Filament formula, remapped from [1.0, 0.0]
+// to [1.0, cone_minimum_intensity].
+fn spot_cone_attenuation(
+    cd: f32,
+    spot_scale: f32,
+    spot_offset: f32,
+    cone_minimum_intensity: f32,
+) -> f32 {
+    let attenuation = saturate(cd * spot_scale + spot_offset);
+    let shaped = attenuation * attenuation;
+    return mix(cone_minimum_intensity, 1.0, shaped);
 }
 
 struct DirectionalCascade {
