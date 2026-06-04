@@ -88,6 +88,8 @@ pub struct ExtractedPointLight {
     pub ambient_minimum: f32,
     pub cone_minimum_intensity: f32,
     pub cutoff_angle: f32,
+    pub falloff_start: f32,
+    pub falloff_exponent: f32,
 }
 
 #[derive(Component, Debug)]
@@ -461,6 +463,8 @@ pub fn extract_lights(
             ambient_minimum: point_light.ambient_minimum,
             cone_minimum_intensity: 0.0,
             cutoff_angle: 0.0,
+            falloff_start: point_light.falloff_start,
+            falloff_exponent: point_light.falloff_exponent,
         };
         point_lights_values.push((
             render_entity,
@@ -532,6 +536,8 @@ pub fn extract_lights(
                         ambient_minimum: spot_light.ambient_minimum,
                         cone_minimum_intensity: spot_light.cone_minimum_intensity,
                         cutoff_angle: spot_light.cutoff_angle,
+                        falloff_start: spot_light.falloff_start,
+                        falloff_exponent: spot_light.falloff_exponent,
                     },
                     render_visible_entities,
                     *frustum,
@@ -589,6 +595,8 @@ pub fn extract_lights(
                         ambient_minimum: spot_light.ambient_minimum,
                         cone_minimum_intensity: spot_light.cone_minimum_intensity,
                         cutoff_angle: spot_light.cutoff_angle,
+                        falloff_start: spot_light.falloff_start,
+                        falloff_exponent: spot_light.falloff_exponent,
                     },
                     render_visible_entities,
                     *frustum,
@@ -1072,7 +1080,13 @@ pub fn prepare_lights(
             color_inverse_square_range: (Vec4::from_slice(&light.color.to_f32_array())
                 * light.intensity)
                 .xyz()
-                .extend(1.0 / (light.range * light.range)),
+                .extend(0.0),
+            falloff_params: Vec4::new(
+                light.falloff_start,
+                light.range,
+                light.falloff_exponent,
+                0.0,
+            ),
             position_radius: light.transform.translation().extend(light.radius),
             flags: pack_clusterable_light_flags(
                 flags,

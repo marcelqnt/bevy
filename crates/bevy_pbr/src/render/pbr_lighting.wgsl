@@ -123,16 +123,39 @@ struct DerivedLightingInput {
     LdotH: f32,
 }
 
-// distanceAttenuation is simply the square falloff of light intensity
-// combined with a smooth attenuation at the edge of the light radius
+// Distance attenuation:
+// - [0, falloff_start]: factor 1.0
+// - (falloff_start, range]: 1/d^falloff_exponent, linearly remapped to hit 0.0 at range
+// - beyond range: 0.0
 //
-// light radius is a non-physical construct for efficiency purposes,
-// because otherwise every light affects every fragment in the scene
-fn getDistanceAttenuation(distanceSquare: f32, inverseRangeSquared: f32) -> f32 {
-    let factor = distanceSquare * inverseRangeSquared;
-    let smoothFactor = saturate(1.0 - factor * factor);
-    let attenuation = smoothFactor * smoothFactor;
-    return attenuation * 1.0 / max(distanceSquare, 0.0001);
+// falloff_params: x = falloff_start, y = range, z = falloff_exponent
+fn getDistanceAttenuation(distance_square: f32, falloff_params: vec4<f32>) -> f32 {
+    let falloff_start = falloff_params.x;
+    let range = falloff_params.y;
+    let falloff_exponent = falloff_params.z;
+
+    let distance = sqrt(distance_square);
+
+    if (distance <= falloff_start) {
+        return 1.0;
+    }
+    if (distance >= range) {
+        return 0.0;
+    }
+
+    let d = max(distance, 1e-4);
+    let d_start = max(falloff_start, 1e-4);
+    let d_range = max(range, 1e-4);
+
+    let raw = 1.0 / pow(d, falloff_exponent);
+    let raw_at_start = 1.0 / pow(d_start, falloff_exponent);
+    let raw_at_range = 1.0 / pow(d_range, falloff_exponent);
+
+    let denom = raw_at_start - raw_at_range;
+    if (denom <= 1e-8) {
+        return 0.0;
+    }
+    return saturate((raw - raw_at_range) / denom);
 }
 
 // Normal distribution function (specular D)
@@ -628,7 +651,7 @@ fn point_light_with_light_to_frag(
     let light = &view_bindings::clusterable_objects.data[light_id];
     let L = normalize(light_to_frag);
     let distance_square = dot(light_to_frag, light_to_frag);
-    let rangeAttenuation = getDistanceAttenuation(distance_square, (*light).color_inverse_square_range.w);
+    let rangeAttenuation = getDistanceAttenuation(distance_square, (*light).falloff_params);
 
     // Base layer
 
@@ -694,7 +717,7 @@ fn point_light_with_light_to_frag(
     // where
     // f(v,l) = (f_d(v,l) + f_r(v,l)) * light_color
     // Φ is luminous power in lumens
-    // our rangeAttenuation = 1 / d^2 multiplied with an attenuation factor for smoothing at the edge of the non-physical maximum light radius
+    // rangeAttenuation follows falloff_start / falloff_exponent / range (see getDistanceAttenuation)
 
     // For a point light, luminous intensity, I, in lumens per steradian is given by:
     // I = Φ / 4 π

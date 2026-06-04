@@ -343,7 +343,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let V = Rd_world;
             let L = normalize(light_to_frag);
             let distance_square = dot(light_to_frag, light_to_frag);
-            let distance_atten = getDistanceAttenuation(distance_square, (*light).color_inverse_square_range.w);
+            let distance_atten = getDistanceAttenuation(distance_square, (*light).falloff_params);
             var local_light_attenuation = distance_atten;
             if (i < clusterable_object_index_ranges.first_spot_light_index_offset) {
                 var shadow: f32 = 1.0;

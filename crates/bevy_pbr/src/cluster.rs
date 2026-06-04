@@ -18,7 +18,7 @@ use crate::MeshPipeline;
 
 // NOTE: this must be kept in sync with the same constants in
 // `mesh_view_types.wgsl`.
-pub const MAX_UNIFORM_BUFFER_CLUSTERABLE_OBJECTS: usize = 170;
+pub const MAX_UNIFORM_BUFFER_CLUSTERABLE_OBJECTS: usize = 146;
 // Make sure that the clusterable object buffer doesn't overflow the maximum
 // size of a UBO on WebGL 2.
 const _: () =
@@ -57,7 +57,10 @@ pub struct GpuClusterableObject {
     // For point lights: the lower-right 2x2 values of the projection matrix [2][2] [2][3] [3][2] [3][3]
     // For spot lights: 2 components of the direction (x,z), spot_scale and spot_offset
     pub(crate) light_custom_data: Vec4,
+    /// xyz = premultiplied color * intensity, w unused
     pub(crate) color_inverse_square_range: Vec4,
+    /// x = falloff_start, y = range, z = falloff_exponent
+    pub(crate) falloff_params: Vec4,
     pub(crate) position_radius: Vec4,
     pub(crate) flags: u32,
     pub(crate) shadow_depth_bias: f32,

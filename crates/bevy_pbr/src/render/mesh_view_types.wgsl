@@ -7,6 +7,8 @@ struct ClusterableObject {
     // For spot lights: the direction (x,z), spot_scale and spot_offset
     light_custom_data: vec4<f32>,
     color_inverse_square_range: vec4<f32>,
+    // x = falloff_start, y = range, z = falloff_exponent
+    falloff_params: vec4<f32>,
     position_radius: vec4<f32>,
     // 'flags' is a bit field indicating various options. u32 is 32 bits so we have up to 32 options.
     flags: u32,
@@ -151,7 +153,7 @@ struct ClusterOffsetsAndCounts {
 };
 #else
 struct ClusterableObjects {
-    data: array<ClusterableObject, 170u>,
+    data: array<ClusterableObject, 146u>,
 };
 struct ClusterLightIndexLists {
     // each u32 contains 4 u8 indices into the ClusterableObjects array

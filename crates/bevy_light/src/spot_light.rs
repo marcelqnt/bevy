@@ -32,12 +32,23 @@ pub struct SpotLight {
     /// Luminous power in lumens, representing the amount of light emitted by this source in all directions.
     pub intensity: f32,
 
-    /// Range in meters that this light illuminates.
+    /// Maximum distance at which this light has any effect. The intensity falls off to zero at
+    /// this distance (see `falloff_start` and `falloff_exponent`).
     ///
     /// Note that this value affects resolution of the shadow maps; generally, the
     /// higher you set it, the lower-resolution your shadow maps will be.
     /// Consequently, you should set this value to be only the size that you need.
     pub range: f32,
+
+    /// Distance from the light at which intensity falloff begins.
+    ///
+    /// Between `0.0` and `falloff_start` the attenuation factor stays at `1.0`. Beyond
+    /// `falloff_start` it follows `1 / distance^falloff_exponent`, scaled so that it reaches
+    /// `0.0` at `range`.
+    pub falloff_start: f32,
+
+    /// Exponent for the inverse-power distance falloff between `falloff_start` and `range`.
+    pub falloff_exponent: f32,
 
     /// Simulates a light source coming from a spherical volume with the given
     /// radius.
@@ -170,6 +181,8 @@ impl Default for SpotLight {
             // this would be way too bright.
             intensity: 1_000_000.0,
             range: 20.0,
+            falloff_start: 1.0,
+            falloff_exponent: 1.0,
             radius: 0.0,
             shadows_enabled: false,
             affects_lightmapped_mesh_diffuse: true,
