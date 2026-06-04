@@ -87,6 +87,7 @@ pub struct ExtractedPointLight {
     pub mask: u32,
     pub ambient_minimum: f32,
     pub cone_minimum_intensity: f32,
+    pub cutoff_angle: f32,
 }
 
 #[derive(Component, Debug)]
@@ -131,10 +132,12 @@ fn pack_clusterable_light_flags(
     flags: PointLightFlags,
     ambient_minimum: f32,
     cone_minimum_intensity: f32,
+    cutoff_degrees: u32,
 ) -> u32 {
     let ambient_bits = (ambient_minimum.clamp(0.0, 1.0) * 255.0).round() as u32;
     let cone_min_bits = (cone_minimum_intensity.clamp(0.0, 1.0) * 255.0).round() as u32;
-    flags.bits() | (ambient_bits << 8) | (cone_min_bits << 16)
+    let cutoff_bits = cutoff_degrees.min(255);
+    flags.bits() | (ambient_bits << 8) | (cone_min_bits << 16) | (cutoff_bits << 24)
 }
 
 #[derive(Copy, Clone, ShaderType, Default, Debug)]
@@ -457,6 +460,7 @@ pub fn extract_lights(
             mask: point_light.mask,
             ambient_minimum: point_light.ambient_minimum,
             cone_minimum_intensity: 0.0,
+            cutoff_angle: 0.0,
         };
         point_lights_values.push((
             render_entity,
@@ -527,6 +531,7 @@ pub fn extract_lights(
                         mask: spot_light.mask,
                         ambient_minimum: spot_light.ambient_minimum,
                         cone_minimum_intensity: spot_light.cone_minimum_intensity,
+                        cutoff_angle: spot_light.cutoff_angle,
                     },
                     render_visible_entities,
                     *frustum,
@@ -583,6 +588,7 @@ pub fn extract_lights(
                         mask: spot_light.mask,
                         ambient_minimum: spot_light.ambient_minimum,
                         cone_minimum_intensity: spot_light.cone_minimum_intensity,
+                        cutoff_angle: spot_light.cutoff_angle,
                     },
                     render_visible_entities,
                     *frustum,
@@ -1054,6 +1060,11 @@ pub fn prepare_lights(
             }
         };
 
+        let cutoff_degrees = light
+            .spot_light_angles
+            .map(|_| light.cutoff_angle.to_degrees().clamp(0.0, 255.0).round() as u32)
+            .unwrap_or(255);
+
         gpu_point_lights.push(GpuClusterableObject {
             light_custom_data,
             // premultiply color by intensity
@@ -1067,6 +1078,7 @@ pub fn prepare_lights(
                 flags,
                 light.ambient_minimum,
                 light.cone_minimum_intensity,
+                cutoff_degrees,
             ),
             shadow_depth_bias: light.shadow_depth_bias,
             shadow_normal_bias: light.shadow_normal_bias,

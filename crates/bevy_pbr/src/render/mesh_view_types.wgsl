@@ -1,5 +1,7 @@
 #define_import_path bevy_pbr::mesh_view_types
 
+#import bevy_render::maths::PI
+
 struct ClusterableObject {
     // For point lights: the lower-right 2x2 values of the projection matrix [2][2] [2][3] [3][2] [3][3]
     // For spot lights: the direction (x,z), spot_scale and spot_offset
@@ -26,6 +28,8 @@ const POINT_LIGHT_FLAGS_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE_BIT: u32   = 1u << 3u;
 const POINT_LIGHT_FLAGS_BAR_LIGHT_BIT: u32                          = 1u << 4u;
 // bits 8..16 encode ambient_minimum as an 8-bit normalized value in [0, 1].
 // bits 16..24 encode cone_minimum_intensity as an 8-bit normalized value in [0, 1].
+// bits 24..32 encode cutoff_angle in degrees (0 = 0°, 255 = 255°). Values above 180°
+// disable the hard cutoff (no angular restriction).
 
 fn clusterable_ambient_minimum(flags: u32) -> f32 {
     return f32((flags >> 8u) & 0xFFu) / 255.0;
@@ -35,14 +39,26 @@ fn clusterable_cone_minimum_intensity(flags: u32) -> f32 {
     return f32((flags >> 16u) & 0xFFu) / 255.0;
 }
 
+fn clusterable_cos_cutoff_angle(flags: u32) -> f32 {
+    let cutoff_degrees = f32((flags >> 24u) & 0xFFu);
+    if (cutoff_degrees > 180.0) {
+        return -1.0;
+    }
+    return cos(cutoff_degrees * PI / 180.0);
+}
+
 // Spot/bar cone attenuation using the Filament formula, remapped from [1.0, 0.0]
-// to [1.0, cone_minimum_intensity].
+// to [1.0, cone_minimum_intensity]. Beyond cutoff_angle the factor is zero.
 fn spot_cone_attenuation(
     cd: f32,
     spot_scale: f32,
     spot_offset: f32,
     cone_minimum_intensity: f32,
+    cos_cutoff_angle: f32,
 ) -> f32 {
+    if (cd < cos_cutoff_angle) {
+        return 0.0;
+    }
     let attenuation = saturate(cd * spot_scale + spot_offset);
     let shaped = attenuation * attenuation;
     return mix(cone_minimum_intensity, 1.0, shaped);

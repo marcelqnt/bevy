@@ -5,6 +5,7 @@
     mesh_view_types::POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE,
     mesh_view_types::clusterable_ambient_minimum,
     mesh_view_types::clusterable_cone_minimum_intensity,
+    mesh_view_types::clusterable_cos_cutoff_angle,
     mesh_view_types::spot_cone_attenuation,
     mesh_view_bindings as view_bindings,
 }
@@ -787,6 +788,7 @@ fn spot_light(
         (*light).light_custom_data.z,
         (*light).light_custom_data.w,
         clusterable_cone_minimum_intensity((*light).flags),
+        clusterable_cos_cutoff_angle((*light).flags),
     );
 
     var texture_sample = 1f;
@@ -862,6 +864,7 @@ fn bar_light(
         (*light).light_custom_data.z,
         (*light).light_custom_data.w,
         clusterable_cone_minimum_intensity((*light).flags),
+        clusterable_cos_cutoff_angle((*light).flags),
     );
 
     var texture_sample = 1f;

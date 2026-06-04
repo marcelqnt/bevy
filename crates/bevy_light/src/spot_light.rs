@@ -132,6 +132,15 @@ pub struct SpotLight {
     /// On the GPU this value is quantized to 8 bits in `[0.0, 1.0]`.
     pub cone_minimum_intensity: f32,
 
+    /// Maximum angle (in radians) from the light axis for which surfaces receive
+    /// any contribution. Beyond this angle the cone factor drops to zero.
+    ///
+    /// Defaults to `PI / 2` (90°), i.e. a hemisphere in the forward direction.
+    ///
+    /// On the GPU the angle is quantized to whole degrees in `[0, 255]` (255° = no hard
+    /// cutoff). Values above 180° disable the angular cutoff entirely.
+    pub cutoff_angle: f32,
+
     pub mask: u32,
 
     /// Minimum factor for the surface normal vs. light direction term (N·L).
@@ -170,6 +179,7 @@ impl Default for SpotLight {
             inner_angle: 0.0,
             outer_angle: core::f32::consts::FRAC_PI_4,
             cone_minimum_intensity: 0.0,
+            cutoff_angle: 3.0 * core::f32::consts::FRAC_PI_4,
             #[cfg(feature = "experimental_pbr_pcss")]
             soft_shadows_enabled: false,
             mask: u32::MAX,

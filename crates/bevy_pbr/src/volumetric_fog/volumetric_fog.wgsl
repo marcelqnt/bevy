@@ -23,6 +23,7 @@
     POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE,
     ClusterableObject,
     clusterable_cone_minimum_intensity,
+    clusterable_cos_cutoff_angle,
     spot_cone_attenuation,
 }
 #import bevy_pbr::shadow_sampling::{
@@ -369,6 +370,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     (*light).light_custom_data.z,
                     (*light).light_custom_data.w,
                     clusterable_cone_minimum_intensity((*light).flags),
+                    clusterable_cos_cutoff_angle((*light).flags),
                 );
 
                 var shadow: f32 = 1.0;
