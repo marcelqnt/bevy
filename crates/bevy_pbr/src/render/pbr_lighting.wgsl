@@ -374,7 +374,8 @@ fn derive_lighting_input(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>) -> DerivedLig
     return input;
 }
 
-// Remaps the N·L factor from [0, 1] to [ambient_minimum, 1].
+// Remaps the diffuse N·L factor from [0, 1] to [ambient_minimum, 1].
+// Specular uses the unmodified N·L term separately.
 fn apply_ambient_minimum(n_dot_l: f32, ambient_minimum: f32) -> f32 {
     return mix(ambient_minimum, 1.0, saturate(n_dot_l));
 }
@@ -725,14 +726,20 @@ fn point_light_with_light_to_frag(
 
     // NOTE: (*light).color.rgb is premultiplied with (*light).intensity / 4 π (which would be the luminous intensity) on the CPU
 
+    let n_dot_l = derived_input.NdotL;
+    let n_dot_l_diffuse = apply_ambient_minimum(
+        n_dot_l,
+        clusterable_ambient_minimum((*light).flags),
+    );
+
     var color: vec3<f32>;
 #ifdef STANDARD_MATERIAL_CLEARCOAT
     // Account for the Fresnel term from the clearcoat darkening the main layer.
     //
     // <https://google.github.io/filament/Filament.html#materialsystem/clearcoatmodel/integrationinthesurfaceresponse>
-    color = (diffuse + specular_light * inv_Fc) * inv_Fc + Frc;
+    color = (diffuse * n_dot_l_diffuse + specular_light * inv_Fc * n_dot_l) * inv_Fc + Frc * n_dot_l;
 #else   // STANDARD_MATERIAL_CLEARCOAT
-    color = diffuse + specular_light;
+    color = diffuse * n_dot_l_diffuse + specular_light * n_dot_l;
 #endif  // STANDARD_MATERIAL_CLEARCOAT
 
     var texture_sample = 1f;
@@ -753,13 +760,8 @@ fn point_light_with_light_to_frag(
     }
 #endif
 
-    let n_dot_l_factor = apply_ambient_minimum(
-        derived_input.NdotL,
-        clusterable_ambient_minimum((*light).flags),
-    );
-
     return color * (*light).color_inverse_square_range.rgb *
-        (rangeAttenuation * n_dot_l_factor) * texture_sample;
+        rangeAttenuation * texture_sample;
 }
 
 fn point_light(
