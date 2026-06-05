@@ -2494,6 +2494,8 @@ fn point_or_spot_light_to_clusterable(point_light: &ExtractedPointLight) -> Clus
     match point_light.spot_light_angles {
         Some((_, outer_angle)) => ClusterableObjectType::SpotLight {
             outer_angle,
+            cutoff_angle: point_light.cutoff_angle,
+            cone_minimum_intensity: point_light.cone_minimum_intensity,
             shadows_enabled: point_light.shadows_enabled,
             volumetric: point_light.volumetric,
         },
