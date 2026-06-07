@@ -2492,10 +2492,7 @@ impl ShadowPassNode {
 /// Creates the [`ClusterableObjectType`] data for a point or spot light.
 fn point_or_spot_light_to_clusterable(point_light: &ExtractedPointLight) -> ClusterableObjectType {
     match point_light.spot_light_angles {
-        Some((_, outer_angle)) => ClusterableObjectType::SpotLight {
-            outer_angle,
-            cutoff_angle: point_light.cutoff_angle,
-            cone_minimum_intensity: point_light.cone_minimum_intensity,
+        Some(_) => ClusterableObjectType::SpotLight {
             shadows_enabled: point_light.shadows_enabled,
             volumetric: point_light.volumetric,
         },

@@ -11,7 +11,7 @@ use bevy_ecs::{
     system::{Commands, Local, Query, Res, ResMut},
 };
 use bevy_math::{
-    ops::{self, sin_cos},
+    ops::{self},
     Mat4, UVec3, Vec2, Vec3, Vec3A, Vec3Swizzles as _, Vec4, Vec4Swizzles as _,
 };
 use bevy_transform::components::GlobalTransform;
@@ -29,106 +29,6 @@ const NDC_MAX: Vec2 = Vec2::ONE;
 
 const VEC2_HALF: Vec2 = Vec2::splat(0.5);
 const VEC2_HALF_NEGATIVE_Y: Vec2 = Vec2::new(0.5, -0.5);
-
-/// Matches GPU quantization of [`SpotLight::cone_minimum_intensity`].
-pub(crate) const CONE_MINIMUM_INTENSITY_CLUSTER_THRESHOLD: f32 = 1.0 / 255.0;
-
-/// Returns the cutoff angle in radians after the same degree quantization applied on the GPU.
-fn gpu_quantized_cutoff_angle(cutoff_angle: f32) -> f32 {
-    cutoff_angle
-        .to_degrees()
-        .clamp(0.0, 255.0)
-        .round()
-        .to_radians()
-}
-
-/// Half-angle (radians from the light axis) used for spot/bar light cluster cone culling.
-pub(crate) fn spot_cluster_cone_half_angle(
-    outer_angle: f32,
-    cutoff_angle: f32,
-    cone_minimum_intensity: f32,
-) -> f32 {
-    let cutoff_angle = gpu_quantized_cutoff_angle(cutoff_angle);
-    if cone_minimum_intensity > CONE_MINIMUM_INTENSITY_CLUSTER_THRESHOLD {
-        cutoff_angle
-    } else if cutoff_angle < outer_angle {
-        // Hard cutoff lies inside the soft cone; contribution ends at cutoff.
-        cutoff_angle
-    } else {
-        outer_angle
-    }
-}
-
-/// Whether spot/bar lights should use point-light-style clustering (range sphere only).
-pub(crate) fn spot_uses_sphere_clustering(
-    outer_angle: f32,
-    cutoff_angle: f32,
-    cone_minimum_intensity: f32,
-) -> bool {
-    if cutoff_angle.to_degrees() > 180.0 {
-        return cone_minimum_intensity > CONE_MINIMUM_INTENSITY_CLUSTER_THRESHOLD;
-    }
-    spot_cluster_cone_half_angle(outer_angle, cutoff_angle, cone_minimum_intensity)
-        >= core::f32::consts::FRAC_PI_2
-}
-
-enum SpotClusterAssignment {
-    Sphere,
-    Cone {
-        view_light_direction: Vec3,
-        angle_sin: f32,
-        angle_cos: f32,
-    },
-}
-
-fn spot_cluster_assignment(
-    transform: &GlobalTransform,
-    view_from_world: Mat4,
-    outer_angle: f32,
-    cutoff_angle: f32,
-    cone_minimum_intensity: f32,
-) -> SpotClusterAssignment {
-    if spot_uses_sphere_clustering(outer_angle, cutoff_angle, cone_minimum_intensity) {
-        return SpotClusterAssignment::Sphere;
-    }
-    let cluster_angle =
-        spot_cluster_cone_half_angle(outer_angle, cutoff_angle, cone_minimum_intensity);
-    let (angle_sin, angle_cos) = sin_cos(cluster_angle);
-    let view_light_direction = (view_from_world * transform.back().extend(0.0))
-        .truncate()
-        .normalize();
-    SpotClusterAssignment::Cone {
-        view_light_direction,
-        angle_sin,
-        angle_cos,
-    }
-}
-
-fn cone_clustered_spot_or_bar_affects_cluster(
-    view_clusterable_object_sphere: &Sphere,
-    cluster_aabb_sphere: &Sphere,
-    view_light_direction: Vec3,
-    angle_sin: f32,
-    angle_cos: f32,
-    range: f32,
-    view_from_world_scale_max: f32,
-) -> bool {
-    // test -- based on https://bartwronski.com/2017/04/13/cull-that-cone/
-    let spot_light_offset =
-        Vec3::from(view_clusterable_object_sphere.center - cluster_aabb_sphere.center);
-    let spot_light_dist_sq = spot_light_offset.length_squared();
-    let v1_len = spot_light_offset.dot(view_light_direction);
-
-    let distance_closest_point =
-        (angle_cos * (spot_light_dist_sq - v1_len * v1_len).sqrt()) - v1_len * angle_sin;
-    let angle_cull = distance_closest_point > cluster_aabb_sphere.radius;
-
-    let front_cull =
-        v1_len > cluster_aabb_sphere.radius + range * view_from_world_scale_max;
-    let back_cull = v1_len < -cluster_aabb_sphere.radius;
-
-    !angle_cull && !front_cull && !back_cull
-}
 
 /// Data required for assigning objects to clusters.
 #[derive(Clone, Debug)]
@@ -179,13 +79,6 @@ pub enum ClusterableObjectType {
         ///
         /// This is used for sorting the light list.
         volumetric: bool,
-
-        /// The outer angle of the light cone in radians.
-        outer_angle: f32,
-        /// Maximum angle from the light axis before the shader zeroes contribution.
-        cutoff_angle: f32,
-        /// Minimum intensity factor at the outer cone edge.
-        cone_minimum_intensity: f32,
     },
 
     /// Data needed to assign bar lights to clusters.
@@ -194,10 +87,6 @@ pub enum ClusterableObjectType {
         shadows_enabled: bool,
         /// Whether this light interacts with volumetrics.
         volumetric: bool,
-        /// The outer angle of the underlying spot cone in radians.
-        outer_angle: f32,
-        cutoff_angle: f32,
-        cone_minimum_intensity: f32,
     },
 
     /// Marks that the clusterable object is a reflection probe.
@@ -285,7 +174,6 @@ pub(crate) fn assign_objects_to_clusters(
     >,
     decals_query: Query<(Entity, &GlobalTransform), With<ClusteredDecal>>,
     mut clusterable_objects: Local<Vec<ClusterableObjectAssignmentData>>,
-    mut cluster_aabb_spheres: Local<Vec<Option<Sphere>>>,
     mut max_clusterable_objects_warning_emitted: Local<bool>,
     global_cluster_settings: Option<Res<GlobalClusterSettings>>,
 ) {
@@ -326,9 +214,6 @@ pub(crate) fn assign_objects_to_clusters(
                         transform: *transform,
                         range: spot_light.range,
                         object_type: ClusterableObjectType::SpotLight {
-                            outer_angle: spot_light.outer_angle,
-                            cutoff_angle: spot_light.cutoff_angle,
-                            cone_minimum_intensity: spot_light.cone_minimum_intensity,
                             shadows_enabled: spot_light.shadows_enabled,
                             volumetric: volumetric.is_some(),
                         },
@@ -348,9 +233,6 @@ pub(crate) fn assign_objects_to_clusters(
                         transform: *transform,
                         range: bar_light.spot_light.range,
                         object_type: ClusterableObjectType::BarLight {
-                            outer_angle: bar_light.spot_light.outer_angle,
-                            cutoff_angle: bar_light.spot_light.cutoff_angle,
-                            cone_minimum_intensity: bar_light.spot_light.cone_minimum_intensity,
                             shadows_enabled: bar_light.spot_light.shadows_enabled,
                             volumetric: volumetric.is_some(),
                         },
@@ -625,10 +507,6 @@ pub(crate) fn assign_objects_to_clusters(
             .clusterable_objects
             .resize_with(cluster_count, VisibleClusterableObjects::default);
 
-        // initialize empty cluster bounding spheres
-        cluster_aabb_spheres.clear();
-        cluster_aabb_spheres.extend(core::iter::repeat_n(None, cluster_count));
-
         // Calculate the x/y/z cluster frustum planes in view space
         let mut x_planes = Vec::with_capacity(clusters.dimensions.x as usize + 1);
         let mut y_planes = Vec::with_capacity(clusters.dimensions.y as usize + 1);
@@ -750,33 +628,6 @@ pub(crate) fn assign_objects_to_clusters(
                     ),
                     radius: clusterable_object_sphere.radius * view_from_world_scale_max,
                 };
-                let spot_cluster_assignment = match clusterable_object.object_type {
-                    ClusterableObjectType::SpotLight {
-                        outer_angle,
-                        cutoff_angle,
-                        cone_minimum_intensity,
-                        ..
-                    }
-                    | ClusterableObjectType::BarLight {
-                        outer_angle,
-                        cutoff_angle,
-                        cone_minimum_intensity,
-                        ..
-                    } => Some(spot_cluster_assignment(
-                        &clusterable_object.transform,
-                        view_from_world,
-                        outer_angle,
-                        cutoff_angle,
-                        cone_minimum_intensity,
-                    )),
-                    ClusterableObjectType::Decal => {
-                        // TODO: cull via a frustum
-                        None
-                    }
-                    ClusterableObjectType::PointLight { .. }
-                    | ClusterableObjectType::ReflectionProbe
-                    | ClusterableObjectType::IrradianceVolume => None,
-                };
                 let clusterable_object_center_clip =
                     camera.clip_from_view() * view_clusterable_object_sphere.center.extend(1.0);
                 let object_center_ndc =
@@ -876,131 +727,29 @@ pub(crate) fn assign_objects_to_clusters(
 
                         match clusterable_object.object_type {
                             ClusterableObjectType::SpotLight { .. } => {
-                                match spot_cluster_assignment.as_ref().unwrap() {
-                                    SpotClusterAssignment::Sphere => {
-                                        for _ in min_x..=max_x {
-                                            clusters.clusterable_objects[cluster_index]
-                                                .entities
-                                                .push(clusterable_object.entity);
-                                            clusters.clusterable_objects[cluster_index]
-                                                .counts
-                                                .spot_lights += 1;
-                                            cluster_index += clusters.dimensions.z as usize;
-                                        }
-                                    }
-                                    SpotClusterAssignment::Cone {
-                                        view_light_direction,
-                                        angle_sin,
-                                        angle_cos,
-                                    } => {
-                                        for x in min_x..=max_x {
-                                            let cluster_aabb_sphere =
-                                                &mut cluster_aabb_spheres[cluster_index];
-                                            let cluster_aabb_sphere =
-                                                if let Some(sphere) = cluster_aabb_sphere {
-                                                    &*sphere
-                                                } else {
-                                                    let aabb = compute_aabb_for_cluster(
-                                                        first_slice_depth,
-                                                        far_z,
-                                                        clusters.tile_size.as_vec2(),
-                                                        screen_size.as_vec2(),
-                                                        view_from_clip,
-                                                        is_orthographic,
-                                                        clusters.dimensions,
-                                                        UVec3::new(x, y, z),
-                                                    );
-                                                    let sphere = Sphere {
-                                                        center: aabb.center,
-                                                        radius: aabb.half_extents.length(),
-                                                    };
-                                                    *cluster_aabb_sphere = Some(sphere);
-                                                    cluster_aabb_sphere.as_ref().unwrap()
-                                                };
-
-                                            if cone_clustered_spot_or_bar_affects_cluster(
-                                                &view_clusterable_object_sphere,
-                                                cluster_aabb_sphere,
-                                                *view_light_direction,
-                                                *angle_sin,
-                                                *angle_cos,
-                                                clusterable_object.range,
-                                                view_from_world_scale_max,
-                                            ) {
-                                                clusters.clusterable_objects[cluster_index]
-                                                    .entities
-                                                    .push(clusterable_object.entity);
-                                                clusters.clusterable_objects[cluster_index]
-                                                    .counts
-                                                    .spot_lights += 1;
-                                            }
-                                            cluster_index += clusters.dimensions.z as usize;
-                                        }
-                                    }
+                                for _ in min_x..=max_x {
+                                    // Spot lights are clustered using their full range sphere.
+                                    // Cone culling is handled in the fragment shader.
+                                    clusters.clusterable_objects[cluster_index]
+                                        .entities
+                                        .push(clusterable_object.entity);
+                                    clusters.clusterable_objects[cluster_index]
+                                        .counts
+                                        .spot_lights += 1;
+                                    cluster_index += clusters.dimensions.z as usize;
                                 }
                             }
                             ClusterableObjectType::BarLight { .. } => {
-                                match spot_cluster_assignment.as_ref().unwrap() {
-                                    SpotClusterAssignment::Sphere => {
-                                        for _ in min_x..=max_x {
-                                            clusters.clusterable_objects[cluster_index]
-                                                .entities
-                                                .push(clusterable_object.entity);
-                                            clusters.clusterable_objects[cluster_index]
-                                                .counts
-                                                .bar_lights += 1;
-                                            cluster_index += clusters.dimensions.z as usize;
-                                        }
-                                    }
-                                    SpotClusterAssignment::Cone {
-                                        view_light_direction,
-                                        angle_sin,
-                                        angle_cos,
-                                    } => {
-                                        for x in min_x..=max_x {
-                                            let cluster_aabb_sphere =
-                                                &mut cluster_aabb_spheres[cluster_index];
-                                            let cluster_aabb_sphere =
-                                                if let Some(sphere) = cluster_aabb_sphere {
-                                                    &*sphere
-                                                } else {
-                                                    let aabb = compute_aabb_for_cluster(
-                                                        first_slice_depth,
-                                                        far_z,
-                                                        clusters.tile_size.as_vec2(),
-                                                        screen_size.as_vec2(),
-                                                        view_from_clip,
-                                                        is_orthographic,
-                                                        clusters.dimensions,
-                                                        UVec3::new(x, y, z),
-                                                    );
-                                                    let sphere = Sphere {
-                                                        center: aabb.center,
-                                                        radius: aabb.half_extents.length(),
-                                                    };
-                                                    *cluster_aabb_sphere = Some(sphere);
-                                                    cluster_aabb_sphere.as_ref().unwrap()
-                                                };
-
-                                            if cone_clustered_spot_or_bar_affects_cluster(
-                                                &view_clusterable_object_sphere,
-                                                cluster_aabb_sphere,
-                                                *view_light_direction,
-                                                *angle_sin,
-                                                *angle_cos,
-                                                clusterable_object.range,
-                                                view_from_world_scale_max,
-                                            ) {
-                                                clusters.clusterable_objects[cluster_index]
-                                                    .entities
-                                                    .push(clusterable_object.entity);
-                                                clusters.clusterable_objects[cluster_index]
-                                                    .counts
-                                                    .bar_lights += 1;
-                                            }
-                                            cluster_index += clusters.dimensions.z as usize;
-                                        }
-                                    }
+                                for _ in min_x..=max_x {
+                                    // Bar lights are clustered using their full range sphere.
+                                    // Cone culling is handled in the fragment shader.
+                                    clusters.clusterable_objects[cluster_index]
+                                        .entities
+                                        .push(clusterable_object.entity);
+                                    clusters.clusterable_objects[cluster_index]
+                                        .counts
+                                        .bar_lights += 1;
+                                    cluster_index += clusters.dimensions.z as usize;
                                 }
                             }
 
@@ -1103,75 +852,6 @@ pub fn calculate_cluster_factors(
             ops::ln(near) * z_slices_of_ln_zfar_over_znear,
         )
     }
-}
-
-fn compute_aabb_for_cluster(
-    z_near: f32,
-    z_far: f32,
-    tile_size: Vec2,
-    screen_size: Vec2,
-    view_from_clip: Mat4,
-    is_orthographic: bool,
-    cluster_dimensions: UVec3,
-    ijk: UVec3,
-) -> Aabb {
-    let ijk = ijk.as_vec3();
-
-    // Calculate the minimum and maximum points in screen space
-    let p_min = ijk.xy() * tile_size;
-    let p_max = p_min + tile_size;
-
-    let cluster_min;
-    let cluster_max;
-    if is_orthographic {
-        // Use linear depth slicing for orthographic
-
-        // Convert to view space at the cluster near and far planes
-        // NOTE: 1.0 is the near plane due to using reverse z projections
-        let mut p_min = screen_to_view(screen_size, view_from_clip, p_min, 0.0).xyz();
-        let mut p_max = screen_to_view(screen_size, view_from_clip, p_max, 0.0).xyz();
-
-        // calculate cluster depth using z_near and z_far
-        p_min.z = -z_near + (z_near - z_far) * ijk.z / cluster_dimensions.z as f32;
-        p_max.z = -z_near + (z_near - z_far) * (ijk.z + 1.0) / cluster_dimensions.z as f32;
-
-        cluster_min = p_min.min(p_max);
-        cluster_max = p_min.max(p_max);
-    } else {
-        // Convert to view space at the near plane
-        // NOTE: 1.0 is the near plane due to using reverse z projections
-        let p_min = screen_to_view(screen_size, view_from_clip, p_min, 1.0);
-        let p_max = screen_to_view(screen_size, view_from_clip, p_max, 1.0);
-
-        let z_far_over_z_near = -z_far / -z_near;
-        let cluster_near = if ijk.z == 0.0 {
-            0.0
-        } else {
-            -z_near
-                * ops::powf(
-                    z_far_over_z_near,
-                    (ijk.z - 1.0) / (cluster_dimensions.z - 1) as f32,
-                )
-        };
-        // NOTE: This could be simplified to:
-        // cluster_far = cluster_near * z_far_over_z_near;
-        let cluster_far = if cluster_dimensions.z == 1 {
-            -z_far
-        } else {
-            -z_near * ops::powf(z_far_over_z_near, ijk.z / (cluster_dimensions.z - 1) as f32)
-        };
-
-        // Calculate the four intersection points of the min and max points with the cluster near and far planes
-        let p_min_near = line_intersection_to_z_plane(Vec3::ZERO, p_min.xyz(), cluster_near);
-        let p_min_far = line_intersection_to_z_plane(Vec3::ZERO, p_min.xyz(), cluster_far);
-        let p_max_near = line_intersection_to_z_plane(Vec3::ZERO, p_max.xyz(), cluster_near);
-        let p_max_far = line_intersection_to_z_plane(Vec3::ZERO, p_max.xyz(), cluster_far);
-
-        cluster_min = p_min_near.min(p_min_far).min(p_max_near.min(p_max_far));
-        cluster_max = p_min_near.max(p_min_far).max(p_max_near.max(p_max_far));
-    }
-
-    Aabb::from_min_max(cluster_min, cluster_max)
 }
 
 // NOTE: Keep in sync as the inverse of view_z_to_z_slice above
@@ -1310,13 +990,6 @@ fn cluster_space_clusterable_object_aabb(
     )
 }
 
-// Calculate the intersection of a ray from the eye through the view space position to a z plane
-fn line_intersection_to_z_plane(origin: Vec3, p: Vec3, z: f32) -> Vec3 {
-    let v = p - origin;
-    let t = (z - Vec3::Z.dot(origin)) / Vec3::Z.dot(v);
-    origin + t * v
-}
-
 // NOTE: Keep in sync with bevy_pbr/src/render/pbr.wgsl
 fn view_z_to_z_slice(
     cluster_factors: Vec2,
@@ -1339,17 +1012,6 @@ fn view_z_to_z_slice(
 fn clip_to_view(view_from_clip: Mat4, clip: Vec4) -> Vec4 {
     let view = view_from_clip * clip;
     view / view.w
-}
-
-fn screen_to_view(screen_size: Vec2, view_from_clip: Mat4, screen: Vec2, ndc_z: f32) -> Vec4 {
-    let tex_coord = screen / screen_size;
-    let clip = Vec4::new(
-        tex_coord.x * 2.0 - 1.0,
-        (1.0 - tex_coord.y) * 2.0 - 1.0,
-        ndc_z,
-        1.0,
-    );
-    clip_to_view(view_from_clip, clip)
 }
 
 // NOTE: This exploits the fact that a x-plane normal has only x and z components
@@ -1406,61 +1068,4 @@ fn project_to_plane_y(
         center: y_object.center + distance_to_plane * y_plane.normal(),
         radius: (y_object.radius * y_object.radius - distance_to_plane * distance_to_plane).sqrt(),
     })
-}
-
-#[cfg(test)]
-mod spot_cluster_cone_tests {
-    use super::{
-        spot_cluster_cone_half_angle, spot_uses_sphere_clustering,
-        CONE_MINIMUM_INTENSITY_CLUSTER_THRESHOLD,
-    };
-
-    #[test]
-    fn cluster_angle_uses_outer_when_no_cone_minimum() {
-        let outer = core::f32::consts::FRAC_PI_4;
-        let cutoff = core::f32::consts::FRAC_PI_2;
-        assert_eq!(spot_cluster_cone_half_angle(outer, cutoff, 0.0), outer);
-    }
-
-    #[test]
-    fn cluster_angle_uses_cutoff_when_cone_minimum_is_active() {
-        let outer = core::f32::consts::FRAC_PI_4;
-        let cutoff = core::f32::consts::FRAC_PI_2;
-        let min = CONE_MINIMUM_INTENSITY_CLUSTER_THRESHOLD + 0.01;
-        assert_eq!(spot_cluster_cone_half_angle(outer, cutoff, min), cutoff);
-    }
-
-    #[test]
-    fn cluster_angle_uses_cutoff_when_cutoff_is_narrower_than_outer() {
-        let outer = 45.0_f32.to_radians();
-        let cutoff = 20.0_f32.to_radians();
-        assert_eq!(spot_cluster_cone_half_angle(outer, cutoff, 0.0), cutoff);
-    }
-
-    #[test]
-    fn wide_outer_angle_uses_sphere_clustering() {
-        assert!(spot_uses_sphere_clustering(
-            core::f32::consts::FRAC_PI_2,
-            core::f32::consts::FRAC_PI_2,
-            0.0,
-        ));
-    }
-
-    #[test]
-    fn disabled_cutoff_with_cone_minimum_uses_sphere_clustering() {
-        assert!(spot_uses_sphere_clustering(
-            core::f32::consts::FRAC_PI_4,
-            core::f32::consts::PI,
-            CONE_MINIMUM_INTENSITY_CLUSTER_THRESHOLD + 0.01,
-        ));
-    }
-
-    #[test]
-    fn disabled_cutoff_without_cone_minimum_keeps_cone_clustering() {
-        assert!(!spot_uses_sphere_clustering(
-            core::f32::consts::FRAC_PI_4,
-            core::f32::consts::PI,
-            0.0,
-        ));
-    }
 }
