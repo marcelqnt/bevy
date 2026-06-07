@@ -636,12 +636,42 @@ fn cubemap_uv(direction: vec3<f32>, cubemap_type: u32) -> vec2<f32> {
     return (vec2<f32>(corner_uv) + face_uv) * face_size;
 }
 
+// GLSL BarLight diffuse direction: max(N·s1, N·s2), plus the segment foot in the cross case.
+fn bar_light_diffuse_direction(
+    N: vec3<f32>,
+    s1: vec3<f32>,
+    s2: vec3<f32>,
+    dist_med: vec3<f32>,
+    is_cross_case: bool,
+) -> vec3<f32> {
+    let n_dot_s1 = dot(s1, N);
+    let n_dot_s2 = dot(s2, N);
+
+    var best_L = s1;
+    var best_dot = n_dot_s1;
+    if (n_dot_s2 > best_dot) {
+        best_dot = n_dot_s2;
+        best_L = s2;
+    }
+
+    if (is_cross_case) {
+        let s_med = normalize(dist_med);
+        let n_dot_med = dot(s_med, N);
+        if (n_dot_med > best_dot) {
+            best_L = s_med;
+        }
+    }
+
+    return best_L;
+}
+
 fn point_light_with_light_to_frag(
     light_id: u32,
     input: ptr<function, LightingInput>,
     enable_diffuse: bool,
     enable_texture: bool,
     light_to_frag: vec3<f32>,
+    diffuse_light_dir: vec3<f32>,
 ) -> vec3<f32> {
     // Unpack.
     let diffuse_color = (*input).diffuse_color;
@@ -651,6 +681,8 @@ fn point_light_with_light_to_frag(
 
     let light = &view_bindings::clusterable_objects.data[light_id];
     let L = normalize(light_to_frag);
+    let use_custom_diffuse = dot(diffuse_light_dir, diffuse_light_dir) > 1e-8;
+    let L_diffuse = select(L, normalize(diffuse_light_dir), use_custom_diffuse);
     let distance_square = dot(light_to_frag, light_to_frag);
     let rangeAttenuation = getDistanceAttenuation(distance_square, (*light).falloff_params);
 
@@ -708,9 +740,10 @@ fn point_light_with_light_to_frag(
     // Diffuse.
     // Comes after specular since its N⋅L is used in the lighting equation.
     var derived_input = derive_lighting_input(N, V, L);
+    var diffuse_derived_input = derive_lighting_input(N, V, L_diffuse);
     var diffuse = vec3(0.0);
     if (enable_diffuse) {
-        diffuse = diffuse_color * Fd_Burley(input, &derived_input);
+        diffuse = diffuse_color * Fd_Burley(input, &diffuse_derived_input);
     }
 
     // See https://google.github.io/filament/Filament.html#mjx-eqn-pointLightLuminanceEquation
@@ -728,7 +761,7 @@ fn point_light_with_light_to_frag(
 
     let n_dot_l = derived_input.NdotL;
     let n_dot_l_diffuse = apply_ambient_minimum(
-        n_dot_l,
+        diffuse_derived_input.NdotL,
         clusterable_ambient_minimum((*light).flags),
     );
 
@@ -778,6 +811,7 @@ fn point_light(
         enable_diffuse,
         enable_texture,
         light_to_frag,
+        vec3(0.0),
     );
 }
 
@@ -802,6 +836,7 @@ fn spot_light(
         enable_diffuse,
         false,
         cone_light_to_frag,
+        vec3(0.0),
     );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
@@ -868,17 +903,32 @@ fn bar_light(
     let along_norm = along * inverseSqrt(along_len_sq);
 
     var dist_med: vec3<f32>;
+    var is_cross_case = false;
     if ((dot(s1, along) > 0.0) && (dot(s2, along) > 0.0)) {
         dist_med = dist1;
     } else if ((dot(s1, along) < 0.0) && (dot(s2, along) < 0.0)) {
         dist_med = dist2;
     } else {
         dist_med = dist1 - along_norm * dot(dist1, along_norm);
+        is_cross_case = true;
     }
 
     let cone_light_to_frag = dist_med;
-    let point_light =
-        point_light_with_light_to_frag(light_id, input, enable_diffuse, false, cone_light_to_frag);
+    let diffuse_light_dir = bar_light_diffuse_direction(
+        (*input).layers[LAYER_BASE].N,
+        s1,
+        s2,
+        dist_med,
+        is_cross_case,
+    );
+    let point_light = point_light_with_light_to_frag(
+        light_id,
+        input,
+        enable_diffuse,
+        false,
+        cone_light_to_frag,
+        diffuse_light_dir,
+    );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
     // spot_scale and spot_offset have been precomputed
