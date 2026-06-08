@@ -521,13 +521,11 @@ fn specular_anisotropy(
 // https://google.github.io/filament/Filament.html#materialsystem/diffusebrdf
 // fd(v,l) = σ/π * 1 / { |n⋅v||n⋅l| } ∫Ω D(m,α) G(v,l,m) (v⋅m) (l⋅m) dm
 //
-// simplest approximation
-// float Fd_Lambert() {
-//     return 1.0 / PI;
-// }
-//
-// vec3 Fd = diffuseColor * Fd_Lambert();
-//
+// View-independent Lambert diffuse (matches legacy GLSL: clamp(N·L) * MatColor).
+fn Fd_Lambert() -> f32 {
+    return 1.0 / PI;
+}
+
 // Disney approximation
 // See https://google.github.io/filament/Filament.html#citation-burley12
 // minimal quality difference
@@ -672,6 +670,7 @@ fn point_light_with_light_to_frag(
     enable_texture: bool,
     light_to_frag: vec3<f32>,
     diffuse_light_dir: vec3<f32>,
+    use_lambert_diffuse: bool,
 ) -> vec3<f32> {
     // Unpack.
     let diffuse_color = (*input).diffuse_color;
@@ -686,56 +685,58 @@ fn point_light_with_light_to_frag(
     let distance_square = dot(light_to_frag, light_to_frag);
     let rangeAttenuation = getDistanceAttenuation(distance_square, (*light).falloff_params);
 
-    // Base layer
+    // TEST: set to false to restore specular for point/spot/bar lights.
+    const DISABLE_CLUSTERABLE_SPECULAR = true;
 
-    let specular_L_intensity = compute_specular_layer_values_for_point_light(
-        input,
-        LAYER_BASE,
-        V,
-        light_to_frag,
-        (*light).position_radius.w,
-    );
-    var specular_derived_input = derive_lighting_input(N, V, specular_L_intensity.xyz);
+    var specular_light = vec3<f32>(0.0);
+    var inv_Fc = 1.0;
+    var Frc = 0.0;
 
-    let specular_intensity = specular_L_intensity.w;
+    if (!DISABLE_CLUSTERABLE_SPECULAR) {
+        // Base layer
+        let specular_L_intensity = compute_specular_layer_values_for_point_light(
+            input,
+            LAYER_BASE,
+            V,
+            light_to_frag,
+            (*light).position_radius.w,
+        );
+        var specular_derived_input = derive_lighting_input(N, V, specular_L_intensity.xyz);
+
+        let specular_intensity = specular_L_intensity.w;
 
 #ifdef STANDARD_MATERIAL_ANISOTROPY
-    let specular_light = specular_anisotropy(input, &specular_derived_input, L, specular_intensity);
+        specular_light = specular_anisotropy(input, &specular_derived_input, L, specular_intensity);
 #else   // STANDARD_MATERIAL_ANISOTROPY
-    let specular_light = specular(input, &specular_derived_input, specular_intensity);
+        specular_light = specular(input, &specular_derived_input, specular_intensity);
 #endif  // STANDARD_MATERIAL_ANISOTROPY
 
-    // Clearcoat
-
+        // Clearcoat
 #ifdef STANDARD_MATERIAL_CLEARCOAT
-    // Unpack.
-    let clearcoat_N = (*input).layers[LAYER_CLEARCOAT].N;
-    let clearcoat_strength = (*input).clearcoat_strength;
+        let clearcoat_N = (*input).layers[LAYER_CLEARCOAT].N;
+        let clearcoat_strength = (*input).clearcoat_strength;
 
-    // Perform specular input calculations again for the clearcoat layer. We
-    // can't reuse the above because the clearcoat normal might be different
-    // from the main layer normal.
-    let clearcoat_specular_L_intensity = compute_specular_layer_values_for_point_light(
-        input,
-        LAYER_CLEARCOAT,
-        V,
-        light_to_frag,
-        (*light).position_radius.w,
-    );
-    var clearcoat_specular_derived_input =
-        derive_lighting_input(clearcoat_N, V, clearcoat_specular_L_intensity.xyz);
+        let clearcoat_specular_L_intensity = compute_specular_layer_values_for_point_light(
+            input,
+            LAYER_CLEARCOAT,
+            V,
+            light_to_frag,
+            (*light).position_radius.w,
+        );
+        var clearcoat_specular_derived_input =
+            derive_lighting_input(clearcoat_N, V, clearcoat_specular_L_intensity.xyz);
 
-    // Calculate the specular light.
-    let clearcoat_specular_intensity = clearcoat_specular_L_intensity.w;
-    let Fc_Frc = specular_clearcoat(
-        input,
-        &clearcoat_specular_derived_input,
-        clearcoat_strength,
-        clearcoat_specular_intensity
-    );
-    let inv_Fc = 1.0 - Fc_Frc.r;    // Inverse Fresnel term.
-    let Frc = Fc_Frc.g;             // Clearcoat light.
+        let clearcoat_specular_intensity = clearcoat_specular_L_intensity.w;
+        let Fc_Frc = specular_clearcoat(
+            input,
+            &clearcoat_specular_derived_input,
+            clearcoat_strength,
+            clearcoat_specular_intensity
+        );
+        inv_Fc = 1.0 - Fc_Frc.r;
+        Frc = Fc_Frc.g;
 #endif  // STANDARD_MATERIAL_CLEARCOAT
+    }
 
     // Diffuse.
     // Comes after specular since its N⋅L is used in the lighting equation.
@@ -743,7 +744,11 @@ fn point_light_with_light_to_frag(
     var diffuse_derived_input = derive_lighting_input(N, V, L_diffuse);
     var diffuse = vec3(0.0);
     if (enable_diffuse) {
-        diffuse = diffuse_color * Fd_Burley(input, &diffuse_derived_input);
+        if (use_lambert_diffuse) {
+            diffuse = diffuse_color * Fd_Lambert();
+        } else {
+            diffuse = diffuse_color * Fd_Burley(input, &diffuse_derived_input);
+        }
     }
 
     // See https://google.github.io/filament/Filament.html#mjx-eqn-pointLightLuminanceEquation
@@ -812,6 +817,7 @@ fn point_light(
         enable_texture,
         light_to_frag,
         vec3(0.0),
+        false,
     );
 }
 
@@ -837,6 +843,7 @@ fn spot_light(
         false,
         cone_light_to_frag,
         vec3(0.0),
+        false,
     );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
@@ -928,6 +935,7 @@ fn bar_light(
         false,
         cone_light_to_frag,
         diffuse_light_dir,
+        true,
     );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
