@@ -521,11 +521,6 @@ fn specular_anisotropy(
 // https://google.github.io/filament/Filament.html#materialsystem/diffusebrdf
 // fd(v,l) = σ/π * 1 / { |n⋅v||n⋅l| } ∫Ω D(m,α) G(v,l,m) (v⋅m) (l⋅m) dm
 //
-// View-independent Lambert diffuse (matches legacy GLSL: clamp(N·L) * MatColor).
-fn Fd_Lambert() -> f32 {
-    return 1.0 / PI;
-}
-
 // Disney approximation
 // See https://google.github.io/filament/Filament.html#citation-burley12
 // minimal quality difference
@@ -634,33 +629,14 @@ fn cubemap_uv(direction: vec3<f32>, cubemap_type: u32) -> vec2<f32> {
     return (vec2<f32>(corner_uv) + face_uv) * face_size;
 }
 
-// GLSL BarLight diffuse direction: max(N·s1, N·s2), plus the segment foot in the cross case.
-fn bar_light_diffuse_direction(
-    N: vec3<f32>,
-    s1: vec3<f32>,
-    s2: vec3<f32>,
-    dist_med: vec3<f32>,
-    is_cross_case: bool,
+// Closest point on a bar-light segment from the fragment (branch-free, continuous).
+fn bar_light_closest_point_on_segment(
+    dist_to_start: vec3<f32>,
+    along: vec3<f32>,
+    along_len_sq: f32,
 ) -> vec3<f32> {
-    let n_dot_s1 = dot(s1, N);
-    let n_dot_s2 = dot(s2, N);
-
-    var best_L = s1;
-    var best_dot = n_dot_s1;
-    if (n_dot_s2 > best_dot) {
-        best_dot = n_dot_s2;
-        best_L = s2;
-    }
-
-    if (is_cross_case) {
-        let s_med = normalize(dist_med);
-        let n_dot_med = dot(s_med, N);
-        if (n_dot_med > best_dot) {
-            best_L = s_med;
-        }
-    }
-
-    return best_L;
+    let t = clamp(-dot(dist_to_start, along) / along_len_sq, 0.0, 1.0);
+    return dist_to_start + along * t;
 }
 
 fn point_light_with_light_to_frag(
@@ -669,8 +645,6 @@ fn point_light_with_light_to_frag(
     enable_diffuse: bool,
     enable_texture: bool,
     light_to_frag: vec3<f32>,
-    diffuse_light_dir: vec3<f32>,
-    use_lambert_diffuse: bool,
 ) -> vec3<f32> {
     // Unpack.
     let diffuse_color = (*input).diffuse_color;
@@ -680,75 +654,59 @@ fn point_light_with_light_to_frag(
 
     let light = &view_bindings::clusterable_objects.data[light_id];
     let L = normalize(light_to_frag);
-    let use_custom_diffuse = dot(diffuse_light_dir, diffuse_light_dir) > 1e-8;
-    let L_diffuse = select(L, normalize(diffuse_light_dir), use_custom_diffuse);
     let distance_square = dot(light_to_frag, light_to_frag);
     let rangeAttenuation = getDistanceAttenuation(distance_square, (*light).falloff_params);
 
-    // TEST: set to false to restore specular for point/spot/bar lights.
-    const DISABLE_CLUSTERABLE_SPECULAR = true;
+    // Base layer
+    let specular_L_intensity = compute_specular_layer_values_for_point_light(
+        input,
+        LAYER_BASE,
+        V,
+        light_to_frag,
+        (*light).position_radius.w,
+    );
+    var specular_derived_input = derive_lighting_input(N, V, specular_L_intensity.xyz);
 
-    var specular_light = vec3<f32>(0.0);
-    var inv_Fc = 1.0;
-    var Frc = 0.0;
-
-    if (!DISABLE_CLUSTERABLE_SPECULAR) {
-        // Base layer
-        let specular_L_intensity = compute_specular_layer_values_for_point_light(
-            input,
-            LAYER_BASE,
-            V,
-            light_to_frag,
-            (*light).position_radius.w,
-        );
-        var specular_derived_input = derive_lighting_input(N, V, specular_L_intensity.xyz);
-
-        let specular_intensity = specular_L_intensity.w;
+    let specular_intensity = specular_L_intensity.w;
 
 #ifdef STANDARD_MATERIAL_ANISOTROPY
-        specular_light = specular_anisotropy(input, &specular_derived_input, L, specular_intensity);
+    let specular_light = specular_anisotropy(input, &specular_derived_input, L, specular_intensity);
 #else   // STANDARD_MATERIAL_ANISOTROPY
-        specular_light = specular(input, &specular_derived_input, specular_intensity);
+    let specular_light = specular(input, &specular_derived_input, specular_intensity);
 #endif  // STANDARD_MATERIAL_ANISOTROPY
 
-        // Clearcoat
+    // Clearcoat
 #ifdef STANDARD_MATERIAL_CLEARCOAT
-        let clearcoat_N = (*input).layers[LAYER_CLEARCOAT].N;
-        let clearcoat_strength = (*input).clearcoat_strength;
+    let clearcoat_N = (*input).layers[LAYER_CLEARCOAT].N;
+    let clearcoat_strength = (*input).clearcoat_strength;
 
-        let clearcoat_specular_L_intensity = compute_specular_layer_values_for_point_light(
-            input,
-            LAYER_CLEARCOAT,
-            V,
-            light_to_frag,
-            (*light).position_radius.w,
-        );
-        var clearcoat_specular_derived_input =
-            derive_lighting_input(clearcoat_N, V, clearcoat_specular_L_intensity.xyz);
+    let clearcoat_specular_L_intensity = compute_specular_layer_values_for_point_light(
+        input,
+        LAYER_CLEARCOAT,
+        V,
+        light_to_frag,
+        (*light).position_radius.w,
+    );
+    var clearcoat_specular_derived_input =
+        derive_lighting_input(clearcoat_N, V, clearcoat_specular_L_intensity.xyz);
 
-        let clearcoat_specular_intensity = clearcoat_specular_L_intensity.w;
-        let Fc_Frc = specular_clearcoat(
-            input,
-            &clearcoat_specular_derived_input,
-            clearcoat_strength,
-            clearcoat_specular_intensity
-        );
-        inv_Fc = 1.0 - Fc_Frc.r;
-        Frc = Fc_Frc.g;
+    let clearcoat_specular_intensity = clearcoat_specular_L_intensity.w;
+    let Fc_Frc = specular_clearcoat(
+        input,
+        &clearcoat_specular_derived_input,
+        clearcoat_strength,
+        clearcoat_specular_intensity
+    );
+    let inv_Fc = 1.0 - Fc_Frc.r;
+    let Frc = Fc_Frc.g;
 #endif  // STANDARD_MATERIAL_CLEARCOAT
-    }
 
     // Diffuse.
     // Comes after specular since its N⋅L is used in the lighting equation.
     var derived_input = derive_lighting_input(N, V, L);
-    var diffuse_derived_input = derive_lighting_input(N, V, L_diffuse);
     var diffuse = vec3(0.0);
     if (enable_diffuse) {
-        if (use_lambert_diffuse) {
-            diffuse = diffuse_color * Fd_Lambert();
-        } else {
-            diffuse = diffuse_color * Fd_Burley(input, &diffuse_derived_input);
-        }
+        diffuse = diffuse_color * Fd_Burley(input, &derived_input);
     }
 
     // See https://google.github.io/filament/Filament.html#mjx-eqn-pointLightLuminanceEquation
@@ -766,7 +724,7 @@ fn point_light_with_light_to_frag(
 
     let n_dot_l = derived_input.NdotL;
     let n_dot_l_diffuse = apply_ambient_minimum(
-        diffuse_derived_input.NdotL,
+        n_dot_l,
         clusterable_ambient_minimum((*light).flags),
     );
 
@@ -816,8 +774,6 @@ fn point_light(
         enable_diffuse,
         enable_texture,
         light_to_frag,
-        vec3(0.0),
-        false,
     );
 }
 
@@ -842,8 +798,6 @@ fn spot_light(
         enable_diffuse,
         false,
         cone_light_to_frag,
-        vec3(0.0),
-        false,
     );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
@@ -901,47 +855,22 @@ fn bar_light(
     let along_len_sq = max((*light).bar_light_data.w, 1e-8);
     let bar_start = (*light).position_radius.xyz - 0.5 * along;
 
-    // dist1/dist2 map directly to the old shader's LightVecs + along.
-    let dist1 = bar_start - (*input).P.xyz;
-    let dist2 = dist1 + along;
+    // Vector from fragment to bar start; closest point on segment drives all lighting terms.
+    let dist_to_start = bar_start - (*input).P.xyz;
+    let light_to_frag = bar_light_closest_point_on_segment(dist_to_start, along, along_len_sq);
 
-    let s1 = dist1 * inverseSqrt(max(dot(dist1, dist1), 1e-8));
-    let s2 = dist2 * inverseSqrt(max(dot(dist2, dist2), 1e-8));
-    let along_norm = along * inverseSqrt(along_len_sq);
-
-    var dist_med: vec3<f32>;
-    var is_cross_case = false;
-    if ((dot(s1, along) > 0.0) && (dot(s2, along) > 0.0)) {
-        dist_med = dist1;
-    } else if ((dot(s1, along) < 0.0) && (dot(s2, along) < 0.0)) {
-        dist_med = dist2;
-    } else {
-        dist_med = dist1 - along_norm * dot(dist1, along_norm);
-        is_cross_case = true;
-    }
-
-    let cone_light_to_frag = dist_med;
-    let diffuse_light_dir = bar_light_diffuse_direction(
-        (*input).layers[LAYER_BASE].N,
-        s1,
-        s2,
-        dist_med,
-        is_cross_case,
-    );
     let point_light = point_light_with_light_to_frag(
         light_id,
         input,
         enable_diffuse,
         false,
-        cone_light_to_frag,
-        diffuse_light_dir,
-        true,
+        light_to_frag,
     );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
     // spot_scale and spot_offset have been precomputed
     // note we normalize here to get "l" from the filament listing. spot_dir is already normalized
-    let cd = dot(-spot_dir, normalize(cone_light_to_frag));
+    let cd = dot(-spot_dir, normalize(light_to_frag));
     let spot_attenuation = spot_cone_attenuation(
         cd,
         (*light).light_custom_data.z,
