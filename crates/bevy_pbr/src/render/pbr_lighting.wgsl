@@ -374,10 +374,10 @@ fn derive_lighting_input(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>) -> DerivedLig
     return input;
 }
 
-// Remaps the diffuse N·L factor from [0, 1] to [ambient_minimum, 1].
+// Floors the diffuse N·L factor at ambient_minimum (GLSL: clamp(diffuseIntensity, otherparam.y, 1.0)).
 // Specular uses the unmodified N·L term separately.
 fn apply_ambient_minimum(n_dot_l: f32, ambient_minimum: f32) -> f32 {
-    return mix(ambient_minimum, 1.0, saturate(n_dot_l));
+    return clamp(n_dot_l, ambient_minimum, 1.0);
 }
 
 // Returns L in the `xyz` components and the specular intensity in the `w` component.

@@ -44,10 +44,17 @@ pub(crate) struct ClusterableObjectAssignmentData {
 
 impl ClusterableObjectAssignmentData {
     pub fn sphere(&self) -> Sphere {
-        Sphere {
-            center: self.transform.translation_vec3a(),
-            radius: self.range,
-        }
+        let center = self.transform.translation_vec3a();
+        let radius = match self.object_type {
+            // Bar lights affect a capsule (segment + range). Its minimal bounding sphere is
+            // centered on the bar midpoint with radius half-segment-length + range.
+            ClusterableObjectType::BarLight {
+                world_segment_half_length,
+                ..
+            } => world_segment_half_length + self.range,
+            _ => self.range,
+        };
+        Sphere { center, radius }
     }
 }
 
@@ -87,6 +94,9 @@ pub enum ClusterableObjectType {
         shadows_enabled: bool,
         /// Whether this light interacts with volumetrics.
         volumetric: bool,
+
+        /// Half the bar segment length in world space.
+        world_segment_half_length: f32,
     },
 
     /// Marks that the clusterable object is a reflection probe.
@@ -228,11 +238,18 @@ pub(crate) fn assign_objects_to_clusters(
             .filter(|(.., visibility)| visibility.get())
             .map(
                 |(entity, transform, bar_light, maybe_layers, volumetric, _visibility)| {
+                    let world_segment_half_length = transform
+                        .affine()
+                        .transform_vector3(bar_light.length)
+                        .length()
+                        * 0.5;
                     ClusterableObjectAssignmentData {
                         entity,
                         transform: *transform,
                         range: bar_light.spot_light.range,
                         object_type: ClusterableObjectType::BarLight {
+
+                            world_segment_half_length,
                             shadows_enabled: bar_light.spot_light.shadows_enabled,
                             volumetric: volumetric.is_some(),
                         },
@@ -741,8 +758,8 @@ pub(crate) fn assign_objects_to_clusters(
                             }
                             ClusterableObjectType::BarLight { .. } => {
                                 for _ in min_x..=max_x {
-                                    // Bar lights are clustered using their full range sphere.
-                                    // Cone culling is handled in the fragment shader.
+                                    // Bar lights use their capsule bounding sphere for clustering.
+                                    // Cone and segment distance falloff are handled in the shader.
                                     clusters.clusterable_objects[cluster_index]
                                         .entities
                                         .push(clusterable_object.entity);

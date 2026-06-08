@@ -138,9 +138,8 @@ pub struct PointLight {
     /// Minimum factor for the surface normal vs. light direction term (N·L).
     ///
     /// Normally, surfaces facing away from the light receive no contribution (N·L = 0).
-    /// This value remaps the N·L factor from `[0.0, 1.0]` to `[ambient_minimum, 1.0]`,
-    /// simulating a localized ambient contribution that still respects light range and
-    /// spot/bar cone falloff.
+    /// Diffuse uses `clamp(N·L, ambient_minimum, 1.0)`, simulating a localized ambient
+    /// contribution that still respects light range and spot/bar cone falloff.
     ///
     /// On the GPU this value is quantized to 8 bits in `[0.0, 1.0]`.
     pub ambient_minimum: f32,
