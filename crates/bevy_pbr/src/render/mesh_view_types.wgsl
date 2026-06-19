@@ -28,6 +28,7 @@ const POINT_LIGHT_FLAGS_SPOT_LIGHT_Y_NEGATIVE: u32                  = 1u << 1u;
 const POINT_LIGHT_FLAGS_VOLUMETRIC_BIT: u32                         = 1u << 2u;
 const POINT_LIGHT_FLAGS_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE_BIT: u32   = 1u << 3u;
 const POINT_LIGHT_FLAGS_BAR_LIGHT_BIT: u32                          = 1u << 4u;
+const POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT: u32                = 1u << 5u;
 // bits 8..16 encode ambient_minimum as an 8-bit normalized value in [0, 1].
 // bits 16..24 encode cone_minimum_intensity as an 8-bit normalized value in [0, 1].
 // bits 24..32 encode cutoff_angle in degrees (0 = 0°, 255 = 255°). Values above 180°
@@ -93,6 +94,7 @@ struct DirectionalLight {
 const DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT: u32                  = 1u << 0u;
 const DIRECTIONAL_LIGHT_FLAGS_VOLUMETRIC_BIT: u32                       = 1u << 1u;
 const DIRECTIONAL_LIGHT_FLAGS_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE_BIT: u32 = 1u << 2u;
+const DIRECTIONAL_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT: u32                = 1u << 3u;
 
 struct Lights {
     // NOTE: this array size must be kept in sync with the constants defined in bevy_pbr/src/render/light.rs

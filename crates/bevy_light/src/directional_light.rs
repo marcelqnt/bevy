@@ -88,6 +88,10 @@ pub struct DirectionalLight {
     /// number of lights with shadows enabled to one or two at most.
     pub shadows_enabled: bool,
 
+    /// Whether this light's contribution is multiplied by the per-pixel
+    /// backed shadow factor during lighting.
+    pub uses_backed_shadows: bool,
+
     /// Whether soft shadows are enabled, and if so, the size of the light.
     ///
     /// Soft shadows, also known as *percentage-closer soft shadows* or PCSS,
@@ -145,6 +149,7 @@ impl Default for DirectionalLight {
             color: Color::WHITE,
             illuminance: light_consts::lux::AMBIENT_DAYLIGHT,
             shadows_enabled: false,
+            uses_backed_shadows: false,
             shadow_depth_bias: Self::DEFAULT_SHADOW_DEPTH_BIAS,
             shadow_normal_bias: Self::DEFAULT_SHADOW_NORMAL_BIAS,
             affects_lightmapped_mesh_diffuse: true,

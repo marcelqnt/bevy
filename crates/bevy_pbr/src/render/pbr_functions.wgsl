@@ -448,7 +448,12 @@ fn apply_pbr_lighting(
         }        
 
         let light_contrib = lighting::point_light(light_id, &lighting_input, enable_diffuse, true);
-        direct_light += light_contrib * shadow;
+        let backed_shadow_factor = lighting::backed_shadow_factor(
+            (view_bindings::clusterable_objects.data[light_id].flags &
+                mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        direct_light += light_contrib * shadow * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -468,7 +473,12 @@ fn apply_pbr_lighting(
 
         let transmitted_light_contrib =
             lighting::point_light(light_id, &transmissive_lighting_input, enable_diffuse, true);
-        transmitted_light += transmitted_light_contrib * transmitted_shadow;
+        let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
+            (view_bindings::clusterable_objects.data[light_id].flags &
+                mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -505,7 +515,12 @@ fn apply_pbr_lighting(
         }
 
         let light_contrib = lighting::spot_light(light_id, &lighting_input, enable_diffuse);
-        direct_light += light_contrib * shadow;
+        let backed_shadow_factor = lighting::backed_shadow_factor(
+            (view_bindings::clusterable_objects.data[light_id].flags &
+                mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        direct_light += light_contrib * shadow * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -530,7 +545,12 @@ fn apply_pbr_lighting(
 
         let transmitted_light_contrib =
             lighting::spot_light(light_id, &transmissive_lighting_input, enable_diffuse);
-        transmitted_light += transmitted_light_contrib * transmitted_shadow;
+        let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
+            (view_bindings::clusterable_objects.data[light_id].flags &
+                mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -559,7 +579,12 @@ fn apply_pbr_lighting(
         }
 
         let light_contrib = lighting::bar_light(light_id, &lighting_input, enable_diffuse);
-        direct_light += light_contrib * shadow;
+        let backed_shadow_factor = lighting::backed_shadow_factor(
+            (view_bindings::clusterable_objects.data[light_id].flags &
+                mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        direct_light += light_contrib * shadow * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         var transmitted_shadow: f32 = 1.0;
@@ -575,7 +600,12 @@ fn apply_pbr_lighting(
 
         let transmitted_light_contrib =
             lighting::bar_light(light_id, &transmissive_lighting_input, enable_diffuse);
-        transmitted_light += transmitted_light_contrib * transmitted_shadow;
+        let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
+            (view_bindings::clusterable_objects.data[light_id].flags &
+                mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -612,7 +642,11 @@ fn apply_pbr_lighting(
 #ifdef DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES
         light_contrib = shadows::cascade_debug_visualization(light_contrib, i, view_z);
 #endif
-        direct_light += light_contrib * shadow;
+        let backed_shadow_factor = lighting::backed_shadow_factor(
+            ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        direct_light += light_contrib * shadow * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -632,7 +666,11 @@ fn apply_pbr_lighting(
 
         let transmitted_light_contrib =
             lighting::directional_light(i, &transmissive_lighting_input, enable_diffuse);
-        transmitted_light += transmitted_light_contrib * transmitted_shadow;
+        let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
+            ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
+            in.backed_shadow,
+        );
+        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -903,26 +941,6 @@ fn premultiply_alpha(standard_material_flags: u32, color: vec4<f32>) -> vec4<f32
         // Here, we don't do anything, so that we get premultiplied alpha blending. (As expected)
         return color.rgba;
     }
-#endif
-// `Multiply` uses its own `BlendState`, but we still need to premultiply here in the
-// shader so that we get correct results as we tweak the alpha channel
-#ifdef BLEND_MULTIPLY
-    // The blend function is:
-    //
-    //     result = dst_color * src_color + (1 - src_alpha) * dst_color
-    //
-    // We premultiply `src_color` by `src_alpha`:
-    //
-    //     src_color *= src_alpha
-    //
-    // We end up with:
-    //
-    //     result = dst_color * (src_color * src_alpha) + (1 - src_alpha) * dst_color
-    //     result = src_alpha * (src_color * dst_color) + (1 - src_alpha) * dst_color
-    //
-    // Which is the blend operation for multiplicative blending with arbitrary mixing
-    // controlled by the source alpha channel
-    return vec4<f32>(color.rgb * color.a, color.a);
 #endif
 }
 #endif

@@ -111,6 +111,10 @@ struct PbrInput {
     // view world position
     V: vec3<f32>,
     lightmap_light: vec3<f32>,
+    // Per-pixel backed shadow factor in `[0, 1]`. Defaults to `1.0`.
+    // Individual material shaders set this on `PbrInput` before calling
+    // `apply_pbr_lighting`.
+    backed_shadow: f32,
     light_mask: u32,
     clearcoat_N: vec3<f32>,
     anisotropy_strength: f32,
@@ -145,6 +149,8 @@ fn pbr_input_new() -> PbrInput {
     pbr_input.anisotropy_B = vec3<f32>(0.0);
 
     pbr_input.lightmap_light = vec3<f32>(0.0);
+
+    pbr_input.backed_shadow = 1.0;
 
     pbr_input.flags = 0u;
 

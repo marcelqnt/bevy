@@ -28,6 +28,8 @@ use bevy_light::{
     BarLight, Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster, PointLight,
     PointLightShadowMap, ShadowFilteringMethod, SpotLight, VolumetricLight,
 };
+use bevy_camera::NormalizedRenderTarget;
+use bevy_render::camera::ExtractedCamera;
 use bevy_math::{ops, Mat4, UVec4, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
 use bevy_platform::collections::{HashMap, HashSet};
 use bevy_platform::hash::FixedHasher;
@@ -75,6 +77,7 @@ pub struct ExtractedPointLight {
     pub radius: f32,
     pub transform: GlobalTransform,
     pub shadows_enabled: bool,
+    pub uses_backed_shadows: bool,
     pub shadow_depth_bias: f32,
     pub shadow_normal_bias: f32,
     pub shadow_map_near_z: f32,
@@ -98,6 +101,7 @@ pub struct ExtractedDirectionalLight {
     pub illuminance: f32,
     pub transform: GlobalTransform,
     pub shadows_enabled: bool,
+    pub uses_backed_shadows: bool,
     pub volumetric: bool,
     /// whether this directional light contributes diffuse light to lightmapped
     /// meshes
@@ -125,6 +129,7 @@ bitflags::bitflags! {
         const VOLUMETRIC                        = 1 << 2;
         const AFFECTS_LIGHTMAPPED_MESH_DIFFUSE  = 1 << 3;
         const BAR_LIGHT                         = 1 << 4;
+        const USES_BACKED_SHADOWS               = 1 << 5;
         const NONE                              = 0;
         const UNINITIALIZED                     = 0xFFFF;
     }
@@ -174,6 +179,7 @@ bitflags::bitflags! {
         const SHADOWS_ENABLED                   = 1 << 0;
         const VOLUMETRIC                        = 1 << 1;
         const AFFECTS_LIGHTMAPPED_MESH_DIFFUSE  = 1 << 2;
+        const USES_BACKED_SHADOWS               = 1 << 3;
         const NONE                              = 0;
         const UNINITIALIZED                     = 0xFFFF;
     }
@@ -445,6 +451,7 @@ pub fn extract_lights(
             radius: point_light.radius,
             transform: *transform,
             shadows_enabled: point_light.shadows_enabled,
+            uses_backed_shadows: point_light.uses_backed_shadows,
             shadow_depth_bias: point_light.shadow_depth_bias,
             // The factor of SQRT_2 is for the worst-case diagonal offset
             shadow_normal_bias: point_light.shadow_normal_bias
@@ -517,6 +524,7 @@ pub fn extract_lights(
                         radius: spot_light.radius,
                         transform: *transform,
                         shadows_enabled: spot_light.shadows_enabled,
+                        uses_backed_shadows: spot_light.uses_backed_shadows,
                         shadow_depth_bias: spot_light.shadow_depth_bias,
                         // The factor of SQRT_2 is for the worst-case diagonal offset
                         shadow_normal_bias: spot_light.shadow_normal_bias
@@ -577,6 +585,7 @@ pub fn extract_lights(
                         radius: spot_light.radius,
                         transform: *transform,
                         shadows_enabled: spot_light.shadows_enabled,
+                        uses_backed_shadows: spot_light.uses_backed_shadows,
                         shadow_depth_bias: spot_light.shadow_depth_bias,
                         shadow_normal_bias: spot_light.shadow_normal_bias
                             * texel_size
@@ -679,6 +688,7 @@ pub fn extract_lights(
                     #[cfg(not(feature = "experimental_pbr_pcss"))]
                     soft_shadow_size: None,
                     shadows_enabled: directional_light.shadows_enabled,
+                    uses_backed_shadows: directional_light.uses_backed_shadows,
                     shadow_depth_bias: directional_light.shadow_depth_bias,
                     // The factor of SQRT_2 is for the worst-case diagonal offset
                     shadow_normal_bias: directional_light.shadow_normal_bias
@@ -810,6 +820,16 @@ pub enum LightEntity {
     },
 }
 
+/// Offscreen cameras (cubemap faces, mirrors, render targets) must not render shadow
+/// maps: they share global shadow-map atlases with the main view and would overwrite
+/// them frame-to-frame when cameras are activated round-robin.
+fn renders_shadow_maps_for_view(camera: &ExtractedCamera) -> bool {
+    matches!(
+        camera.target,
+        Some(NormalizedRenderTarget::Window(_))
+    )
+}
+
 pub fn prepare_lights(
     mut commands: Commands,
     mut texture_cache: ResMut<TextureCache>,
@@ -825,6 +845,7 @@ pub fn prepare_lights(
             Option<&RenderLayers>,
             Has<NoIndirectDrawing>,
             Option<&AmbientLight>,
+            &ExtractedCamera,
         ),
         With<Camera3d>,
     >,
@@ -1025,6 +1046,9 @@ pub fn prepare_lights(
         if light.bar_light_length.is_some() {
             flags |= PointLightFlags::BAR_LIGHT;
         }
+        if light.uses_backed_shadows {
+            flags |= PointLightFlags::USES_BACKED_SHADOWS;
+        }
 
         let (light_custom_data, spot_light_tan_angle, bar_light_data) = match light.spot_light_angles {
             Some((inner, outer)) => {
@@ -1124,11 +1148,16 @@ pub fn prepare_lights(
         maybe_layers,
         _no_indirect_drawing,
         _maybe_ambient_override,
+        extracted_camera,
     ) in sorted_cameras
         .0
         .iter()
         .filter_map(|sorted_camera| views.get(sorted_camera.entity).ok())
     {
+        if !renders_shadow_maps_for_view(extracted_camera) {
+            continue;
+        }
+
         let mut num_directional_cascades_for_this_view = 0usize;
         let render_layers = maybe_layers.unwrap_or_default();
 
@@ -1262,6 +1291,7 @@ pub fn prepare_lights(
         maybe_layers,
         no_indirect_drawing,
         maybe_ambient_override,
+        extracted_camera,
     ) in sorted_cameras
         .0
         .iter()
@@ -1269,6 +1299,7 @@ pub fn prepare_lights(
     {
         live_views.insert(entity);
 
+        let render_shadow_maps = renders_shadow_maps_for_view(extracted_camera);
         let view_layers = maybe_layers.unwrap_or_default();
         let mut view_lights = Vec::new();
         let mut view_occlusion_culling_lights = Vec::new();
@@ -1313,7 +1344,7 @@ pub fn prepare_lights(
 
             // Shadow enabled lights are second
             let mut num_cascades = 0;
-            if light.shadows_enabled {
+            if light.shadows_enabled && render_shadow_maps {
                 let cascades = light
                     .cascade_shadow_config
                     .bounds
@@ -1330,6 +1361,9 @@ pub fn prepare_lights(
 
             if light.affects_lightmapped_mesh_diffuse {
                 flags |= DirectionalLightFlags::AFFECTS_LIGHTMAPPED_MESH_DIFFUSE;
+            }
+            if light.uses_backed_shadows {
+                flags |= DirectionalLightFlags::USES_BACKED_SHADOWS;
             }
 
             gpu_directional_lights[index] = GpuDirectionalLight {
@@ -1390,7 +1424,7 @@ pub fn prepare_lights(
                 continue;
             };
 
-            if !light.shadows_enabled {
+            if !light.shadows_enabled || !render_shadow_maps {
                 if let Some(entities) = light_view_entities.remove(&entity) {
                     despawn_entities(&mut commands, entities);
                 }
@@ -1513,7 +1547,7 @@ pub fn prepare_lights(
                 continue;
             };
 
-            if !light.shadows_enabled {
+            if !light.shadows_enabled || !render_shadow_maps {
                 if let Some(entities) = light_view_entities.remove(&entity) {
                     despawn_entities(&mut commands, entities);
                 }

@@ -81,6 +81,11 @@ pub struct PointLight {
     /// Whether this light casts shadows.
     pub shadows_enabled: bool,
 
+    /// Whether this light's contribution is multiplied by the per-pixel
+    /// `backed_shadow` value on `PbrInput` during lighting. Custom material
+    /// shaders set that value before lighting.
+    pub uses_backed_shadows: bool,
+
     /// Whether soft shadows are enabled.
     ///
     /// Soft shadows, also known as *percentage-closer soft shadows* or PCSS,
@@ -155,6 +160,7 @@ impl Default for PointLight {
             falloff_exponent: 1.0,
             radius: 0.0,
             shadows_enabled: false,
+            uses_backed_shadows: false,
             affects_lightmapped_mesh_diffuse: true,
             shadow_depth_bias: Self::DEFAULT_SHADOW_DEPTH_BIAS,
             shadow_normal_bias: Self::DEFAULT_SHADOW_NORMAL_BIAS,

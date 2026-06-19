@@ -984,3 +984,14 @@ fn directional_light(
 
     return color * (*light).color.rgb * texture_sample;
 }
+
+// Returns the backed shadow multiplier for a light source.
+//
+// Lights with `uses_backed_shadows` set multiply their contribution by the
+// per-pixel `backed_shadow` value; all other lights are unaffected.
+fn backed_shadow_factor(uses_backed_shadows: bool, backed_shadow: f32) -> f32 {
+    if (uses_backed_shadows) {
+        return backed_shadow;
+    }
+    return 1.0;
+}

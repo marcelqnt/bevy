@@ -2390,13 +2390,15 @@ impl SpecializedMeshPipeline for MeshPipeline {
             blend = Some(BlendState {
                 color: BlendComponent {
                     src_factor: BlendFactor::Dst,
-                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+                    dst_factor: BlendFactor::Zero,
                     operation: BlendOperation::Add,
                 },
-                alpha: BlendComponent::OVER,
+                alpha: BlendComponent {
+                    src_factor: BlendFactor::Dst,
+                    dst_factor: BlendFactor::Zero,
+                    operation: BlendOperation::Add,
+                },
             });
-            shader_defs.push("PREMULTIPLY_ALPHA".into());
-            shader_defs.push("BLEND_MULTIPLY".into());
         } else if pass == MeshPipelineKey::BLEND_ALPHA_TO_COVERAGE {
             label = "alpha_to_coverage_mesh_pipeline".into();
             // BlendState::REPLACE is not needed here, and None will be potentially much faster in some cases

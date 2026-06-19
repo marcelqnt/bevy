@@ -53,7 +53,9 @@ pub enum AlphaMode {
     /// Combines the color of the fragments with the colors behind them in a
     /// multiplicative process, (i.e. like pigments) producing darker results.
     ///
-    /// White produces no effect. Alpha values can be used to modulate the result.
+    /// White produces no effect. The RGB channels of the fragment and destination
+    /// colors are multiplied element-wise. The alpha channel does not affect the
+    /// color channels.
     ///
     /// Useful for effects like stained glass, window tint film and some colored liquids.
     Multiply,
