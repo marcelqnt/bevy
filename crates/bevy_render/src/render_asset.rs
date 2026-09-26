@@ -380,10 +380,7 @@ pub fn prepare_assets<A: RenderAsset>(
     }
 
     for (id, extracted_asset) in extracted_assets.extracted.drain(..) {
-        // we remove previous here to ensure that if we are updating the asset then
-        // any users will not see the old asset after a new asset is extracted,
-        // even if the new asset is not yet ready or we are out of bytes to write.
-        let previous_asset = render_assets.remove(id);
+        let previous_asset = render_assets.get(id);
 
         let write_bytes = if let Some(size) = A::byte_len(&extracted_asset) {
             if bpf.exhausted() {
@@ -395,7 +392,7 @@ pub fn prepare_assets<A: RenderAsset>(
             0
         };
 
-        match A::prepare_asset(extracted_asset, id, &mut param, previous_asset.as_ref()) {
+        match A::prepare_asset(extracted_asset, id, &mut param, previous_asset) {
             Ok(prepared_asset) => {
                 render_assets.insert(id, prepared_asset);
                 bpf.write_bytes(write_bytes);
@@ -505,7 +502,7 @@ impl RenderAssetBytesPerFrameLimiter {
     }
 
     /// Returns `true` if there are no remaining bytes available for writing this frame.
-    pub(crate) fn exhausted(&self) -> bool {
+    pub fn exhausted(&self) -> bool {
         if let Some(max_bytes) = self.max_bytes {
             let bytes_written = self.bytes_written.load(Ordering::Relaxed);
             bytes_written >= max_bytes

@@ -72,6 +72,11 @@ pub trait MaterialExtension: Asset + AsBindGroup + Clone + Sized {
         ShaderRef::Default
     }
 
+    /// Synthetic byte cost for render prepare throttling. See [`Material::prepare_byte_len`].
+    fn prepare_byte_len(&self) -> Option<usize> {
+        None
+    }
+
     /// Returns this material's [`crate::meshlet::MeshletMesh`] fragment shader. If [`ShaderRef::Default`] is returned,
     /// the default meshlet mesh fragment shader will be used.
     #[cfg(feature = "meshlet")]
@@ -327,6 +332,15 @@ impl<B: Material, E: MaterialExtension> Material for ExtendedMaterial<B, E> {
 
     fn reads_view_transmission_texture(&self) -> bool {
         B::reads_view_transmission_texture(&self.base)
+    }
+
+    fn prepare_byte_len(&self) -> Option<usize> {
+        let base = B::prepare_byte_len(&self.base);
+        let extension = E::prepare_byte_len(&self.extension);
+        match (base, extension) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+        }
     }
 
     fn prepass_vertex_shader() -> ShaderRef {

@@ -322,6 +322,16 @@ pub struct PrepareNextFrameAssets<A: ErasedRenderAsset> {
     assets: Vec<(AssetId<A::SourceAsset>, A::SourceAsset)>,
 }
 
+/// Assets deferred because the per-frame byte budget was exhausted.
+///
+/// When this resource is present for an [`ErasedRenderAsset`] type, [`prepare_erased_assets`]
+/// uses a dual-queue policy: runtime re-prepares of assets that already exist on the GPU are
+/// queued here and drained before the standard [`PrepareNextFrameAssets`] queue.
+#[derive(Resource)]
+pub struct PrepareNextFramePriorityAssets<A: ErasedRenderAsset> {
+    assets: Vec<(AssetId<A::SourceAsset>, A::SourceAsset)>,
+}
+
 impl<A: ErasedRenderAsset> Default for PrepareNextFrameAssets<A> {
     fn default() -> Self {
         Self {
@@ -330,102 +340,282 @@ impl<A: ErasedRenderAsset> Default for PrepareNextFrameAssets<A> {
     }
 }
 
+impl<A: ErasedRenderAsset> Default for PrepareNextFramePriorityAssets<A> {
+    fn default() -> Self {
+        Self {
+            assets: Default::default(),
+        }
+    }
+}
+
+impl<A: ErasedRenderAsset> PrepareNextFrameAssets<A> {
+    /// Assets deferred because the per-frame byte budget was exhausted.
+    pub fn queued_len(&self) -> usize {
+        self.assets.len()
+    }
+
+    /// Sum of [`ErasedRenderAsset::byte_len`] for queued assets (0 for assets without a byte cost).
+    pub fn queued_bytes(&self) -> usize {
+        self.assets
+            .iter()
+            .filter_map(|(_, asset)| A::byte_len(asset))
+            .sum()
+    }
+}
+
+/// Runtime re-prepare asset ids extracted from the main world this frame.
+///
+/// When present together with [`PrepareNextFramePriorityAssets`], newly extracted assets whose id
+/// is listed here are routed to the priority queue. All other extracted assets use the standard
+/// queue (initial mesh/material loads).
+#[derive(Resource)]
+pub struct PreparePriorityAssetIds<A: ErasedRenderAsset> {
+    pub ids: HashSet<AssetId<A::SourceAsset>>,
+}
+
+impl<A: ErasedRenderAsset> Default for PreparePriorityAssetIds<A> {
+    fn default() -> Self {
+        Self {
+            ids: HashSet::default(),
+        }
+    }
+}
+
+impl<A: ErasedRenderAsset> PrepareNextFramePriorityAssets<A> {
+    /// Runtime re-prepare assets deferred because the per-frame byte budget was exhausted.
+    pub fn queued_len(&self) -> usize {
+        self.assets.len()
+    }
+
+    /// Sum of [`ErasedRenderAsset::byte_len`] for queued priority assets.
+    pub fn queued_bytes(&self) -> usize {
+        self.assets
+            .iter()
+            .filter_map(|(_, asset)| A::byte_len(asset))
+            .sum()
+    }
+}
+
+fn should_skip_queued<A: ErasedRenderAsset>(
+    id: AssetId<A::SourceAsset>,
+    extracted_assets: &ExtractedAssets<A>,
+) -> bool {
+    extracted_assets.removed.contains(&id) || extracted_assets.added.contains(&id)
+}
+
+enum PrepareErasedAssetOutcome<A: ErasedRenderAsset> {
+    Prepared,
+    Deferred(A::SourceAsset),
+    Retry(A::SourceAsset),
+}
+
+fn try_prepare_erased_asset<A: ErasedRenderAsset>(
+    id: AssetId<A::SourceAsset>,
+    extracted_asset: A::SourceAsset,
+    render_assets: &mut ErasedRenderAssets<A::ErasedAsset>,
+    param: &mut SystemParamItem<A::Param>,
+    bpf: &RenderAssetBytesPerFrameLimiter,
+) -> PrepareErasedAssetOutcome<A> {
+    let write_bytes = if let Some(size) = A::byte_len(&extracted_asset) {
+        if bpf.exhausted() {
+            return PrepareErasedAssetOutcome::Deferred(extracted_asset);
+        }
+        size
+    } else {
+        0
+    };
+
+    match A::prepare_asset(extracted_asset, id, param) {
+        Ok(prepared_asset) => {
+            render_assets.insert(id, prepared_asset);
+            bpf.write_bytes(write_bytes);
+            PrepareErasedAssetOutcome::Prepared
+        }
+        Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
+            PrepareErasedAssetOutcome::Retry(extracted_asset)
+        }
+        Err(PrepareAssetError::AsBindGroupError(e)) => {
+            error!(
+                "{} Bind group construction failed: {e}",
+                core::any::type_name::<A>()
+            );
+            PrepareErasedAssetOutcome::Prepared
+        }
+    }
+}
+
+fn drain_prepare_queue<A: ErasedRenderAsset>(
+    queued_assets: Vec<(AssetId<A::SourceAsset>, A::SourceAsset)>,
+    extracted_assets: &ExtractedAssets<A>,
+    render_assets: &mut ErasedRenderAssets<A::ErasedAsset>,
+    param: &mut SystemParamItem<A::Param>,
+    bpf: &RenderAssetBytesPerFrameLimiter,
+    defer_queue: &mut Vec<(AssetId<A::SourceAsset>, A::SourceAsset)>,
+) -> usize {
+    let mut wrote_asset_count = 0;
+
+    for (id, extracted_asset) in queued_assets {
+        if should_skip_queued::<A>(id, extracted_assets) {
+            continue;
+        }
+
+        match try_prepare_erased_asset::<A>(id, extracted_asset, render_assets, param, bpf) {
+            PrepareErasedAssetOutcome::Prepared => wrote_asset_count += 1,
+            PrepareErasedAssetOutcome::Deferred(extracted_asset)
+            | PrepareErasedAssetOutcome::Retry(extracted_asset) => {
+                defer_queue.push((id, extracted_asset));
+            }
+        }
+    }
+
+    wrote_asset_count
+}
+
+fn prepare_extracted_batch<A: ErasedRenderAsset>(
+    extracted: Vec<(AssetId<A::SourceAsset>, A::SourceAsset)>,
+    render_assets: &mut ErasedRenderAssets<A::ErasedAsset>,
+    param: &mut SystemParamItem<A::Param>,
+    bpf: &RenderAssetBytesPerFrameLimiter,
+    defer_queue: &mut Vec<(AssetId<A::SourceAsset>, A::SourceAsset)>,
+) -> usize {
+    let mut wrote_asset_count = 0;
+
+    for (id, extracted_asset) in extracted {
+        match try_prepare_erased_asset::<A>(id, extracted_asset, render_assets, param, bpf) {
+            PrepareErasedAssetOutcome::Prepared => wrote_asset_count += 1,
+            PrepareErasedAssetOutcome::Deferred(extracted_asset)
+            | PrepareErasedAssetOutcome::Retry(extracted_asset) => {
+                defer_queue.push((id, extracted_asset));
+            }
+        }
+    }
+
+    wrote_asset_count
+}
+
 /// This system prepares all assets of the corresponding [`ErasedRenderAsset::SourceAsset`] type
 /// which where extracted this frame for the GPU.
 pub fn prepare_erased_assets<A: ErasedRenderAsset>(
     mut extracted_assets: ResMut<ExtractedAssets<A>>,
     mut render_assets: ResMut<ErasedRenderAssets<A::ErasedAsset>>,
     mut prepare_next_frame: ResMut<PrepareNextFrameAssets<A>>,
+    priority_prepare_next_frame: Option<ResMut<PrepareNextFramePriorityAssets<A>>>,
+    priority_asset_ids: Option<Res<PreparePriorityAssetIds<A>>>,
     param: StaticSystemParam<<A as ErasedRenderAsset>::Param>,
     bpf: Res<RenderAssetBytesPerFrameLimiter>,
 ) {
     let mut wrote_asset_count = 0;
-
     let mut param = param.into_inner();
-    let queued_assets = core::mem::take(&mut prepare_next_frame.assets);
-    for (id, extracted_asset) in queued_assets {
-        if extracted_assets.removed.contains(&id) || extracted_assets.added.contains(&id) {
-            // skip previous frame's assets that have been removed or updated
-            continue;
-        }
 
-        let write_bytes = if let Some(size) = A::byte_len(&extracted_asset) {
-            // we could check if available bytes > byte_len here, but we want to make some
-            // forward progress even if the asset is larger than the max bytes per frame.
-            // this way we always write at least one (sized) asset per frame.
-            // in future we could also consider partial asset uploads.
-            if bpf.exhausted() {
-                prepare_next_frame.assets.push((id, extracted_asset));
-                continue;
-            }
-            size
-        } else {
-            0
-        };
+    match priority_prepare_next_frame {
+        Some(mut priority_prepare_next_frame) => {
+            let is_priority =
+                |id: AssetId<A::SourceAsset>| priority_asset_ids.as_ref().is_some_and(|ids| ids.ids.contains(&id));
+            let mut priority_extracted = Vec::new();
+            let mut normal_extracted = Vec::new();
 
-        match A::prepare_asset(extracted_asset, id, &mut param) {
-            Ok(prepared_asset) => {
-                render_assets.insert(id, prepared_asset);
-                bpf.write_bytes(write_bytes);
-                wrote_asset_count += 1;
+            for (id, extracted_asset) in extracted_assets.extracted.drain(..) {
+                if is_priority(id) {
+                    priority_extracted.push((id, extracted_asset));
+                } else {
+                    normal_extracted.push((id, extracted_asset));
+                }
             }
-            Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
-                prepare_next_frame.assets.push((id, extracted_asset));
+
+            let priority_queued = core::mem::take(&mut priority_prepare_next_frame.assets);
+            wrote_asset_count += drain_prepare_queue::<A>(
+                priority_queued,
+                &extracted_assets,
+                &mut render_assets,
+                &mut param,
+                &bpf,
+                &mut priority_prepare_next_frame.assets,
+            );
+
+            wrote_asset_count += prepare_extracted_batch::<A>(
+                priority_extracted,
+                &mut render_assets,
+                &mut param,
+                &bpf,
+                &mut priority_prepare_next_frame.assets,
+            );
+
+            let queued_assets = core::mem::take(&mut prepare_next_frame.assets);
+            wrote_asset_count += drain_prepare_queue::<A>(
+                queued_assets,
+                &extracted_assets,
+                &mut render_assets,
+                &mut param,
+                &bpf,
+                &mut prepare_next_frame.assets,
+            );
+
+            wrote_asset_count += prepare_extracted_batch::<A>(
+                normal_extracted,
+                &mut render_assets,
+                &mut param,
+                &bpf,
+                &mut prepare_next_frame.assets,
+            );
+
+            for removed in extracted_assets.removed.drain() {
+                render_assets.remove(removed);
+                A::unload_asset(removed, &mut param);
             }
-            Err(PrepareAssetError::AsBindGroupError(e)) => {
-                error!(
-                    "{} Bind group construction failed: {e}",
-                    core::any::type_name::<A>()
+
+            if bpf.exhausted()
+                && (!prepare_next_frame.assets.is_empty()
+                    || !priority_prepare_next_frame.assets.is_empty())
+            {
+                debug!(
+                    "{} write budget exhausted with {} standard and {} priority assets remaining (wrote {})",
+                    core::any::type_name::<A>(),
+                    prepare_next_frame.assets.len(),
+                    priority_prepare_next_frame.assets.len(),
+                    wrote_asset_count
                 );
             }
         }
-    }
+        None => {
+            let queued_assets = core::mem::take(&mut prepare_next_frame.assets);
+            wrote_asset_count += drain_prepare_queue::<A>(
+                queued_assets,
+                &extracted_assets,
+                &mut render_assets,
+                &mut param,
+                &bpf,
+                &mut prepare_next_frame.assets,
+            );
 
-    for removed in extracted_assets.removed.drain() {
-        render_assets.remove(removed);
-        A::unload_asset(removed, &mut param);
-    }
-
-    for (id, extracted_asset) in extracted_assets.extracted.drain(..) {
-        // we remove previous here to ensure that if we are updating the asset then
-        // any users will not see the old asset after a new asset is extracted,
-        // even if the new asset is not yet ready or we are out of bytes to write.
-        render_assets.remove(id);
-
-        let write_bytes = if let Some(size) = A::byte_len(&extracted_asset) {
-            if bpf.exhausted() {
-                prepare_next_frame.assets.push((id, extracted_asset));
-                continue;
+            for removed in extracted_assets.removed.drain() {
+                render_assets.remove(removed);
+                A::unload_asset(removed, &mut param);
             }
-            size
-        } else {
-            0
-        };
 
-        match A::prepare_asset(extracted_asset, id, &mut param) {
-            Ok(prepared_asset) => {
-                render_assets.insert(id, prepared_asset);
-                bpf.write_bytes(write_bytes);
-                wrote_asset_count += 1;
+            for (id, extracted_asset) in extracted_assets.extracted.drain(..) {
+                match try_prepare_erased_asset::<A>(
+                    id,
+                    extracted_asset,
+                    &mut render_assets,
+                    &mut param,
+                    &bpf,
+                ) {
+                    PrepareErasedAssetOutcome::Prepared => wrote_asset_count += 1,
+                    PrepareErasedAssetOutcome::Deferred(extracted_asset)
+                    | PrepareErasedAssetOutcome::Retry(extracted_asset) => {
+                        prepare_next_frame.assets.push((id, extracted_asset));
+                    }
+                }
             }
-            Err(PrepareAssetError::RetryNextUpdate(extracted_asset)) => {
-                prepare_next_frame.assets.push((id, extracted_asset));
-            }
-            Err(PrepareAssetError::AsBindGroupError(e)) => {
-                error!(
-                    "{} Bind group construction failed: {e}",
-                    core::any::type_name::<A>()
+
+            if bpf.exhausted() && !prepare_next_frame.assets.is_empty() {
+                debug!(
+                    "{} write budget exhausted with {} assets remaining (wrote {})",
+                    core::any::type_name::<A>(),
+                    prepare_next_frame.assets.len(),
+                    wrote_asset_count
                 );
             }
         }
-    }
-
-    if bpf.exhausted() && !prepare_next_frame.assets.is_empty() {
-        debug!(
-            "{} write budget exhausted with {} assets remaining (wrote {})",
-            core::any::type_name::<A>(),
-            prepare_next_frame.assets.len(),
-            wrote_asset_count
-        );
     }
 }

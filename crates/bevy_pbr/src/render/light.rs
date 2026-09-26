@@ -414,6 +414,12 @@ pub fn extract_lights(
     // https://catlikecoding.com/unity/tutorials/custom-srp/point-and-spot-shadows/
     let point_light_texel_size = 2.0 / point_light_shadow_map.size as f32;
 
+    // Lights that leave the visible set must drop their extracted state. Otherwise
+    // `shadows_enabled` stays latched from the last visible frame and shadow views
+    // keep rendering until the light entity is despawned.
+    let mut visible_point_lights = EntityHashSet::default();
+    let mut visible_spot_lights = EntityHashSet::default();
+
     let mut point_lights_values = Vec::with_capacity(*previous_point_lights_len);
     for entity in global_visible_clusterable.iter().copied() {
         let Ok((
@@ -482,6 +488,7 @@ pub fn extract_lights(
                 MainEntity::from(main_entity),
             ),
         ));
+        visible_point_lights.insert(render_entity);
     }
     *previous_point_lights_len = point_lights_values.len();
     commands.try_insert_batch(point_lights_values);
@@ -552,6 +559,7 @@ pub fn extract_lights(
                     MainEntity::from(main_entity),
                 ),
             ));
+            visible_spot_lights.insert(render_entity);
         }
 
         if let Ok((
@@ -612,10 +620,26 @@ pub fn extract_lights(
                     MainEntity::from(main_entity),
                 ),
             ));
+            visible_spot_lights.insert(render_entity);
         }
     }
     *previous_spot_lights_len = spot_lights_values.len();
     commands.try_insert_batch(spot_lights_values);
+
+    for render_entity in &previous_point_lights {
+        if !visible_point_lights.contains(&render_entity) {
+            if let Ok(mut entity) = commands.get_entity(render_entity) {
+                entity.remove::<(ExtractedPointLight, RenderCubemapVisibleEntities)>();
+            }
+        }
+    }
+    for render_entity in &previous_spot_lights {
+        if !visible_spot_lights.contains(&render_entity) {
+            if let Ok(mut entity) = commands.get_entity(render_entity) {
+                entity.remove::<(ExtractedPointLight, RenderVisibleMeshEntities)>();
+            }
+        }
+    }
 
     for (
         main_entity,

@@ -187,6 +187,14 @@ pub trait Material: Asset + AsBindGroup + Clone + Sized {
         false
     }
 
+    /// Synthetic byte cost for [`RenderAssetBytesPerFrame`](bevy_render::render_asset::RenderAssetBytesPerFrame) throttling.
+    ///
+    /// Return `None` to opt out (unlimited prepare per frame, the default).
+    #[inline]
+    fn prepare_byte_len(&self) -> Option<usize> {
+        None
+    }
+
     /// Returns this material's prepass vertex shader. If [`ShaderRef::Default`] is returned, the default prepass vertex shader
     /// will be used.
     ///
@@ -1649,6 +1657,10 @@ where
             M::Param,
         ),
     );
+
+    fn byte_len(material: &Self::SourceAsset) -> Option<usize> {
+        M::prepare_byte_len(material)
+    }
 
     fn prepare_asset(
         material: Self::SourceAsset,

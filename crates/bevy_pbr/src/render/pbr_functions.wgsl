@@ -744,8 +744,9 @@ fn apply_pbr_lighting(
             found_diffuse_indirect,
         );
 
-        indirect_light += environment_light.diffuse * diffuse_occlusion +
-            environment_light.specular * specular_occlusion;
+        let environment_map_factor = in.environment_map_factor;
+        indirect_light += environment_light.diffuse * diffuse_occlusion;
+        indirect_light += environment_light.specular * specular_occlusion * environment_map_factor;
     }
 #endif  // ENVIRONMENT_MAP
 
@@ -817,7 +818,7 @@ fn apply_pbr_lighting(
     transmitted_light += transmitted_environment_light.diffuse * diffuse_transmissive_color;
 #endif  // STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
 #ifdef STANDARD_MATERIAL_SPECULAR_TRANSMISSION
-    specular_transmitted_environment_light = transmitted_environment_light.specular * specular_transmissive_color;
+    specular_transmitted_environment_light = transmitted_environment_light.specular * specular_transmissive_color * in.environment_map_factor;
 #endif  // STANDARD_MATERIAL_SPECULAR_TRANSMISSION
 
 #endif  // STANDARD_MATERIAL_SPECULAR_OR_DIFFUSE_TRANSMISSION
