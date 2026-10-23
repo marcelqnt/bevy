@@ -161,6 +161,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     lighting_input.P = world_position.xyz;
     lighting_input.V = V;
     lighting_input.diffuse_color = diffuse_color;
+    lighting_input.translum_rgb = vec3<f32>(0.0);
     lighting_input.F0_ = F0;
     lighting_input.F_ab = F_ab;
 #ifdef STANDARD_MATERIAL_CLEARCOAT

@@ -81,6 +81,9 @@ struct LightingInput {
     // The diffuse color of the material.
     diffuse_color: vec3<f32>,
 
+    // LOTUS translumination color (night texture). Zero disables the back-light mix.
+    translum_rgb: vec3<f32>,
+
     // Specular reflectance at the normal incidence angle.
     //
     // This should be read F₀, but due to Naga limitations we can't name it that.
@@ -380,6 +383,25 @@ fn apply_ambient_minimum(n_dot_l: f32, ambient_minimum: f32) -> f32 {
     return clamp(n_dot_l, ambient_minimum, 1.0);
 }
 
+// LOTUS flag 32: night-texture color replaces the front diffuse when a light
+// hits the surface from behind. `front` is the existing diffuse term, which
+// already includes Fd_Burley's 1/π. The night texture stands in for the albedo,
+// so the back term needs the same factor.
+// `shadow` occludes the front lobe. `translum_shadow` is the Bevy transmitted
+// lookup (flipped normal) so the surface does not shadow its own back side.
+// A zero `translum_rgb` leaves the shadowed front unchanged.
+fn apply_translumination(
+    front: vec3<f32>,
+    n: vec3<f32>,
+    l: vec3<f32>,
+    translum_rgb: vec3<f32>,
+    shadow: f32,
+    translum_shadow: f32,
+) -> vec3<f32> {
+    let back = clamp(-dot(n, l) + 0.3, 0.0, 1.0) * translum_rgb * (1.0 / PI);
+    return max(front * shadow, back * translum_shadow);
+}
+
 // Returns L in the `xyz` components and the specular intensity in the `w` component.
 fn compute_specular_layer_values_for_point_light(
     input: ptr<function, LightingInput>,
@@ -645,6 +667,8 @@ fn point_light_with_light_to_frag(
     enable_diffuse: bool,
     enable_texture: bool,
     light_to_frag: vec3<f32>,
+    shadow: f32,
+    translum_shadow: f32,
 ) -> vec3<f32> {
     // Unpack.
     let diffuse_color = (*input).diffuse_color;
@@ -727,15 +751,23 @@ fn point_light_with_light_to_frag(
         n_dot_l,
         clusterable_ambient_minimum((*light).flags),
     );
+    let diffuse_term = apply_translumination(
+        diffuse * n_dot_l_diffuse,
+        N,
+        L,
+        (*input).translum_rgb,
+        shadow,
+        translum_shadow,
+    );
 
     var color: vec3<f32>;
 #ifdef STANDARD_MATERIAL_CLEARCOAT
     // Account for the Fresnel term from the clearcoat darkening the main layer.
     //
     // <https://google.github.io/filament/Filament.html#materialsystem/clearcoatmodel/integrationinthesurfaceresponse>
-    color = (diffuse * n_dot_l_diffuse + specular_light * inv_Fc * n_dot_l) * inv_Fc + Frc * n_dot_l;
+    color = (diffuse_term + specular_light * inv_Fc * n_dot_l * shadow) * inv_Fc + Frc * n_dot_l * shadow;
 #else   // STANDARD_MATERIAL_CLEARCOAT
-    color = diffuse * n_dot_l_diffuse + specular_light * n_dot_l;
+    color = diffuse_term + specular_light * n_dot_l * shadow;
 #endif  // STANDARD_MATERIAL_CLEARCOAT
 
     var texture_sample = 1f;
@@ -765,6 +797,8 @@ fn point_light(
     input: ptr<function, LightingInput>,
     enable_diffuse: bool,
     enable_texture: bool,
+    shadow: f32,
+    translum_shadow: f32,
 ) -> vec3<f32> {
     let light = &view_bindings::clusterable_objects.data[light_id];
     let light_to_frag = (*light).position_radius.xyz - (*input).P.xyz;
@@ -774,13 +808,17 @@ fn point_light(
         enable_diffuse,
         enable_texture,
         light_to_frag,
+        shadow,
+        translum_shadow,
     );
 }
 
 fn spot_light(
     light_id: u32,
     input: ptr<function, LightingInput>,
-    enable_diffuse: bool
+    enable_diffuse: bool,
+    shadow: f32,
+    translum_shadow: f32,
 ) -> vec3<f32> {
     let light = &view_bindings::clusterable_objects.data[light_id];
 
@@ -798,6 +836,8 @@ fn spot_light(
         enable_diffuse,
         false,
         cone_light_to_frag,
+        shadow,
+        translum_shadow,
     );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
@@ -838,7 +878,9 @@ fn spot_light(
 fn bar_light(
     light_id: u32,
     input: ptr<function, LightingInput>,
-    enable_diffuse: bool
+    enable_diffuse: bool,
+    shadow: f32,
+    translum_shadow: f32,
 ) -> vec3<f32> {
     let light = &view_bindings::clusterable_objects.data[light_id];
 
@@ -865,6 +907,8 @@ fn bar_light(
         enable_diffuse,
         false,
         light_to_frag,
+        shadow,
+        translum_shadow,
     );
 
     // calculate attenuation based on filament formula https://google.github.io/filament/Filament.html#listing_glslpunctuallight
@@ -905,7 +949,9 @@ fn bar_light(
 fn directional_light(
     light_id: u32,
     input: ptr<function, LightingInput>,
-    enable_diffuse: bool
+    enable_diffuse: bool,
+    shadow: f32,
+    translum_shadow: f32,
 ) -> vec3<f32> {
     // Unpack.
     let diffuse_color = (*input).diffuse_color;
@@ -945,15 +991,25 @@ fn directional_light(
     let Frc = Fc_Frc.g;
 #endif  // STANDARD_MATERIAL_CLEARCOAT
 
+    let n_dot_l = derived_input.NdotL;
+    let diffuse_term = apply_translumination(
+        diffuse * n_dot_l,
+        N,
+        L,
+        (*input).translum_rgb,
+        shadow,
+        translum_shadow,
+    );
+
     var color: vec3<f32>;
 #ifdef STANDARD_MATERIAL_CLEARCOAT
     // Account for the Fresnel term from the clearcoat darkening the main layer.
     //
     // <https://google.github.io/filament/Filament.html#materialsystem/clearcoatmodel/integrationinthesurfaceresponse>
-    color = (diffuse + specular_light * inv_Fc) * inv_Fc * derived_input.NdotL +
-        Frc * derived_clearcoat_input.NdotL;
+    color = (diffuse_term + specular_light * inv_Fc * n_dot_l * shadow) * inv_Fc +
+        Frc * derived_clearcoat_input.NdotL * shadow;
 #else   // STANDARD_MATERIAL_CLEARCOAT
-    color = (diffuse + specular_light) * derived_input.NdotL;
+    color = diffuse_term + specular_light * n_dot_l * shadow;
 #endif  // STANDARD_MATERIAL_CLEARCOAT
 
     var texture_sample = 1f;

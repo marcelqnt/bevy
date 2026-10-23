@@ -119,6 +119,9 @@ struct PbrInput {
     // Diffuse IBL and ambient light are unaffected. Defaults to `1.0`.
     environment_map_factor: f32,
     light_mask: u32,
+    // Raw night-texture color for LOTUS translumination. Zero leaves lighting unchanged.
+    // The lotus shader sets this from one night-texture sample when flag bit 32 is set.
+    translum_rgb: vec3<f32>,
     clearcoat_N: vec3<f32>,
     anisotropy_strength: f32,
     // These two aren't specific to anisotropy, but we only fill them in if
@@ -160,6 +163,8 @@ fn pbr_input_new() -> PbrInput {
     pbr_input.flags = 0u;
 
     pbr_input.light_mask = 4294967295;
+
+    pbr_input.translum_rgb = vec3<f32>(0.0);
 
     return pbr_input;
 }

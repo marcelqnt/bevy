@@ -120,6 +120,23 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 #endif // VERTEX_TANGENTS
 #endif // NORMAL_PREPASS_OR_DEFERRED_PREPASS
 
+#ifdef TREE_ALPHA
+#ifdef VERTEX_NORMALS
+    // Shadow views have no normal prepass, but shader 29 discards by view-space
+    // normal z. Pack that z into world_position.w for the lotus prepass fragment.
+    var tree_normal: vec3<f32>;
+#ifdef SKINNED
+    tree_normal = skinning::skin_normals(world_from_local, vertex.normal);
+#else
+    tree_normal = mesh_functions::mesh_normal_local_to_world(
+        vertex.normal,
+        vertex_no_morph.instance_index
+    );
+#endif
+    out.world_position.w = (view.view_from_world * vec4<f32>(tree_normal, 0.0)).z;
+#endif // VERTEX_NORMALS
+#endif // TREE_ALPHA
+
 #ifdef VERTEX_COLORS
     out.color = vertex.color;
 #endif

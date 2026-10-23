@@ -367,6 +367,7 @@ fn apply_pbr_lighting(
     lighting_input.P = in.world_position.xyz;
     lighting_input.V = in.V;
     lighting_input.diffuse_color = diffuse_color;
+    lighting_input.translum_rgb = in.translum_rgb;
     lighting_input.F0_ = F0;
     lighting_input.F_ab = F_ab;
 #ifdef STANDARD_MATERIAL_CLEARCOAT
@@ -394,6 +395,7 @@ fn apply_pbr_lighting(
     transmissive_lighting_input.P = diffuse_transmissive_lobe_world_position.xyz;
     transmissive_lighting_input.V = -in.V;
     transmissive_lighting_input.diffuse_color = diffuse_transmissive_color;
+    transmissive_lighting_input.translum_rgb = vec3<f32>(0.0);
     transmissive_lighting_input.F0_ = vec3(0.0);
     transmissive_lighting_input.F_ab = vec2(0.1);
 #ifdef STANDARD_MATERIAL_CLEARCOAT
@@ -442,18 +444,26 @@ fn apply_pbr_lighting(
 #endif  // LIGHTMAP
 
         var shadow: f32 = 1.0;
+        var translum_shadow: f32 = 1.0;
         if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
                 && (view_bindings::clusterable_objects.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
             shadow = shadows::fetch_point_shadow(light_id, in.world_position, in.world_normal);
-        }        
+            // Same lookup Bevy uses for the transmitted lobe: flipped normal, so the
+            // surface does not shadow its own back side. Thickness is zero here.
+            if (dot(lighting_input.translum_rgb, lighting_input.translum_rgb) > 0.0) {
+                translum_shadow = shadows::fetch_point_shadow(light_id, in.world_position, -in.world_normal);
+            } else {
+                translum_shadow = shadow;
+            }
+        }
 
-        let light_contrib = lighting::point_light(light_id, &lighting_input, enable_diffuse, true);
+        let light_contrib = lighting::point_light(light_id, &lighting_input, enable_diffuse, true, shadow, translum_shadow);
         let backed_shadow_factor = lighting::backed_shadow_factor(
             (view_bindings::clusterable_objects.data[light_id].flags &
                 mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        direct_light += light_contrib * shadow * backed_shadow_factor;
+        direct_light += light_contrib * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -472,13 +482,13 @@ fn apply_pbr_lighting(
         }
 
         let transmitted_light_contrib =
-            lighting::point_light(light_id, &transmissive_lighting_input, enable_diffuse, true);
+            lighting::point_light(light_id, &transmissive_lighting_input, enable_diffuse, true, transmitted_shadow, transmitted_shadow);
         let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
             (view_bindings::clusterable_objects.data[light_id].flags &
                 mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
+        transmitted_light += transmitted_light_contrib * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -503,6 +513,7 @@ fn apply_pbr_lighting(
 #endif  // LIGHTMAP
 
         var shadow: f32 = 1.0;
+        var translum_shadow: f32 = 1.0;
         if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
                 && (view_bindings::clusterable_objects.data[light_id].flags &
                     mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
@@ -512,15 +523,25 @@ fn apply_pbr_lighting(
                 in.world_normal,
                 view_bindings::clusterable_objects.data[light_id].shadow_map_near_z,
             );
+            if (dot(lighting_input.translum_rgb, lighting_input.translum_rgb) > 0.0) {
+                translum_shadow = shadows::fetch_spot_shadow(
+                    light_id,
+                    in.world_position,
+                    -in.world_normal,
+                    view_bindings::clusterable_objects.data[light_id].shadow_map_near_z,
+                );
+            } else {
+                translum_shadow = shadow;
+            }
         }
 
-        let light_contrib = lighting::spot_light(light_id, &lighting_input, enable_diffuse);
+        let light_contrib = lighting::spot_light(light_id, &lighting_input, enable_diffuse, shadow, translum_shadow);
         let backed_shadow_factor = lighting::backed_shadow_factor(
             (view_bindings::clusterable_objects.data[light_id].flags &
                 mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        direct_light += light_contrib * shadow * backed_shadow_factor;
+        direct_light += light_contrib * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -544,13 +565,13 @@ fn apply_pbr_lighting(
         }
 
         let transmitted_light_contrib =
-            lighting::spot_light(light_id, &transmissive_lighting_input, enable_diffuse);
+            lighting::spot_light(light_id, &transmissive_lighting_input, enable_diffuse, transmitted_shadow, transmitted_shadow);
         let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
             (view_bindings::clusterable_objects.data[light_id].flags &
                 mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
+        transmitted_light += transmitted_light_contrib * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -567,6 +588,7 @@ fn apply_pbr_lighting(
         let enable_diffuse = true;
 
         var shadow: f32 = 1.0;
+        var translum_shadow: f32 = 1.0;
         if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
                 && (view_bindings::clusterable_objects.data[light_id].flags &
                     mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
@@ -576,15 +598,25 @@ fn apply_pbr_lighting(
                 in.world_normal,
                 view_bindings::clusterable_objects.data[light_id].shadow_map_near_z,
             );
+            if (dot(lighting_input.translum_rgb, lighting_input.translum_rgb) > 0.0) {
+                translum_shadow = shadows::fetch_spot_shadow(
+                    light_id,
+                    in.world_position,
+                    -in.world_normal,
+                    view_bindings::clusterable_objects.data[light_id].shadow_map_near_z,
+                );
+            } else {
+                translum_shadow = shadow;
+            }
         }
 
-        let light_contrib = lighting::bar_light(light_id, &lighting_input, enable_diffuse);
+        let light_contrib = lighting::bar_light(light_id, &lighting_input, enable_diffuse, shadow, translum_shadow);
         let backed_shadow_factor = lighting::backed_shadow_factor(
             (view_bindings::clusterable_objects.data[light_id].flags &
                 mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        direct_light += light_contrib * shadow * backed_shadow_factor;
+        direct_light += light_contrib * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         var transmitted_shadow: f32 = 1.0;
@@ -599,13 +631,13 @@ fn apply_pbr_lighting(
         }
 
         let transmitted_light_contrib =
-            lighting::bar_light(light_id, &transmissive_lighting_input, enable_diffuse);
+            lighting::bar_light(light_id, &transmissive_lighting_input, enable_diffuse, transmitted_shadow, transmitted_shadow);
         let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
             (view_bindings::clusterable_objects.data[light_id].flags &
                 mesh_view_types::POINT_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
+        transmitted_light += transmitted_light_contrib * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -632,12 +664,18 @@ fn apply_pbr_lighting(
 #endif  // LIGHTMAP
 
         var shadow: f32 = 1.0;
+        var translum_shadow: f32 = 1.0;
         if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
                 && (view_bindings::lights.directional_lights[i].flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
             shadow = shadows::fetch_directional_shadow(i, in.world_position, in.world_normal, view_z);
+            if (dot(lighting_input.translum_rgb, lighting_input.translum_rgb) > 0.0) {
+                translum_shadow = shadows::fetch_directional_shadow(i, in.world_position, -in.world_normal, view_z);
+            } else {
+                translum_shadow = shadow;
+            }
         }
 
-        var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
+        var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse, shadow, translum_shadow);
 
 #ifdef DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES
         light_contrib = shadows::cascade_debug_visualization(light_contrib, i, view_z);
@@ -646,7 +684,7 @@ fn apply_pbr_lighting(
             ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        direct_light += light_contrib * shadow * backed_shadow_factor;
+        direct_light += light_contrib * backed_shadow_factor;
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -665,12 +703,12 @@ fn apply_pbr_lighting(
         }
 
         let transmitted_light_contrib =
-            lighting::directional_light(i, &transmissive_lighting_input, enable_diffuse);
+            lighting::directional_light(i, &transmissive_lighting_input, enable_diffuse, transmitted_shadow, transmitted_shadow);
         let transmitted_backed_shadow_factor = lighting::backed_shadow_factor(
             ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_USES_BACKED_SHADOWS_BIT) != 0u,
             in.backed_shadow,
         );
-        transmitted_light += transmitted_light_contrib * transmitted_shadow * transmitted_backed_shadow_factor;
+        transmitted_light += transmitted_light_contrib * transmitted_backed_shadow_factor;
 #endif
     }
 
@@ -789,6 +827,7 @@ fn apply_pbr_lighting(
 
     var transmissive_environment_light_input: lighting::LightingInput;
     transmissive_environment_light_input.diffuse_color = vec3(1.0);
+    transmissive_environment_light_input.translum_rgb = vec3<f32>(0.0);
     transmissive_environment_light_input.layers[LAYER_BASE].NdotV = 1.0;
     transmissive_environment_light_input.P = in.world_position.xyz;
     transmissive_environment_light_input.layers[LAYER_BASE].N = -in.N;
