@@ -11,6 +11,11 @@ struct Globals {
     frame_count: u32,
 #ifdef SIXTEEN_BYTE_ALIGNMENT
     // WebGL2 structs must be 16 byte aligned.
-    _webgl2_padding: f32
+    _webgl2_padding: f32,
 #endif
+    // Shared tree-wind cursor, written once per frame by the simulator.
+    wind_cursor: f32,
+    wind_cursor_b: f32,
+    wind_blend: f32,
+    wind_pad: f32,
 };

@@ -53,6 +53,14 @@ pub struct GlobalsUniform {
     /// WebGL2 structs must be 16 byte aligned.
     #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
     _wasm_padding: f32,
+    /// Shared tree-wind cursor. The simulator writes this once per frame.
+    /// Every matrix-skinned tree samples the same value.
+    pub wind_cursor: f32,
+    /// Next frame of [`Self::wind_cursor`], texel center in 0..1.
+    pub wind_cursor_b: f32,
+    /// Blend from [`Self::wind_cursor`] toward [`Self::wind_cursor_b`].
+    pub wind_blend: f32,
+    wind_pad: f32,
 }
 
 /// The buffer containing the [`GlobalsUniform`]

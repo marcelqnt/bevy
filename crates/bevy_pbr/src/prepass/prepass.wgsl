@@ -8,6 +8,7 @@
     mesh_view_bindings::view,
     view_transformations::position_world_to_clip,
 }
+#import bevy_render::globals::Globals
 
 #ifdef DEFERRED_PREPASS
 #import bevy_pbr::rgb9e5
@@ -56,6 +57,188 @@ fn morph_prev_vertex(vertex_in: Vertex) -> Vertex {
 }
 #endif  // MORPH_TARGETS
 
+#ifdef MATRIX_SKIN
+// Prepass view group binds Globals at binding 1, not at the forward-pass binding 11.
+@group(0) @binding(1)
+var<uniform> wind_globals: Globals;
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(214)
+var matrix_texture: texture_2d<f32>;
+
+fn identity_matrix() -> mat4x4<f32> {
+    return mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    );
+}
+
+fn matrix_column(high: vec4<f32>, low: vec4<f32>) -> vec4<f32> {
+    return 0.0625 * (high * 256.0 + low - vec4<f32>(128.0));
+}
+
+fn matrix_at(frame: f32, bone: u32) -> mat4x4<f32> {
+    let dims = textureDimensions(matrix_texture);
+    let width = i32(dims.x);
+    let height = i32(dims.y);
+    if width < 8 || height <= 0 {
+        return identity_matrix();
+    }
+    let wrapped = frame - floor(frame);
+    var y = i32(floor(wrapped * f32(height)));
+    if y >= height {
+        y = 0;
+    }
+    y = height - 1 - y;
+    let x = i32(bone) * 8;
+    if x + 7 >= width {
+        return identity_matrix();
+    }
+    let c0 = matrix_column(
+        textureLoad(matrix_texture, vec2<i32>(x, y), 0),
+        textureLoad(matrix_texture, vec2<i32>(x + 1, y), 0),
+    );
+    let c1 = matrix_column(
+        textureLoad(matrix_texture, vec2<i32>(x + 2, y), 0),
+        textureLoad(matrix_texture, vec2<i32>(x + 3, y), 0),
+    );
+    let c2 = matrix_column(
+        textureLoad(matrix_texture, vec2<i32>(x + 4, y), 0),
+        textureLoad(matrix_texture, vec2<i32>(x + 5, y), 0),
+    );
+    let c3 = matrix_column(
+        textureLoad(matrix_texture, vec2<i32>(x + 6, y), 0),
+        textureLoad(matrix_texture, vec2<i32>(x + 7, y), 0),
+    );
+    return mat4x4<f32>(c0, c1, c2, c3);
+}
+
+fn rigid_axes(m: mat4x4<f32>) -> mat3x3<f32> {
+    let x = normalize(m[0].xyz);
+    var y = m[1].xyz - x * dot(x, m[1].xyz);
+    if length(y) < 1e-6 {
+        y = vec3<f32>(0.0, 1.0, 0.0);
+    } else {
+        y = normalize(y);
+    }
+    return mat3x3<f32>(x, y, cross(x, y));
+}
+
+fn quat_from_axes(m: mat3x3<f32>) -> vec4<f32> {
+    let trace = m[0].x + m[1].y + m[2].z;
+    var q: vec4<f32>;
+    if trace > 0.0 {
+        let s = sqrt(trace + 1.0) * 2.0;
+        q = vec4<f32>((m[1].z - m[2].y) / s, (m[2].x - m[0].z) / s, (m[0].y - m[1].x) / s, 0.25 * s);
+    } else if m[0].x > m[1].y && m[0].x > m[2].z {
+        let s = sqrt(1.0 + m[0].x - m[1].y - m[2].z) * 2.0;
+        q = vec4<f32>(0.25 * s, (m[0].y + m[1].x) / s, (m[0].z + m[2].x) / s, (m[1].z - m[2].y) / s);
+    } else if m[1].y > m[2].z {
+        let s = sqrt(1.0 + m[1].y - m[0].x - m[2].z) * 2.0;
+        q = vec4<f32>((m[0].y + m[1].x) / s, 0.25 * s, (m[1].z + m[2].y) / s, (m[2].x - m[0].z) / s);
+    } else {
+        let s = sqrt(1.0 + m[2].z - m[0].x - m[1].y) * 2.0;
+        q = vec4<f32>((m[0].z + m[2].x) / s, (m[1].z + m[2].y) / s, 0.25 * s, (m[0].y - m[1].x) / s);
+    }
+    return normalize(q);
+}
+
+fn axes_from_quat(q: vec4<f32>) -> mat3x3<f32> {
+    let x = q.x;
+    let y = q.y;
+    let z = q.z;
+    let w = q.w;
+    let x2 = x + x;
+    let y2 = y + y;
+    let z2 = z + z;
+    let xx = x * x2;
+    let xy = x * y2;
+    let xz = x * z2;
+    let yy = y * y2;
+    let yz = y * z2;
+    let zz = z * z2;
+    let wx = w * x2;
+    let wy = w * y2;
+    let wz = w * z2;
+    return mat3x3<f32>(
+        vec3<f32>(1.0 - (yy + zz), xy + wz, xz - wy),
+        vec3<f32>(xy - wz, 1.0 - (xx + zz), yz + wx),
+        vec3<f32>(xz + wy, yz - wx, 1.0 - (xx + yy)),
+    );
+}
+
+fn slerp_quat(a: vec4<f32>, b_in: vec4<f32>, t: f32) -> vec4<f32> {
+    var b = b_in;
+    var cosom = dot(a, b);
+    if cosom < 0.0 {
+        b = -b;
+        cosom = -cosom;
+    }
+    if cosom > 0.9995 {
+        return normalize(mix(a, b, vec4<f32>(t)));
+    }
+    let omega = acos(clamp(cosom, -1.0, 1.0));
+    let sinom = sin(omega);
+    let s0 = sin((1.0 - t) * omega) / sinom;
+    let s1 = sin(t * omega) / sinom;
+    return a * s0 + b * s1;
+}
+
+fn blended_bone_matrix(bone: u32) -> mat4x4<f32> {
+    // Same global cursor as the main pass. One upload per frame for every tree.
+    let pose_a = matrix_at(wind_globals.wind_cursor, bone);
+    let pose_b = matrix_at(wind_globals.wind_cursor_b, bone);
+    let blend = wind_globals.wind_blend;
+    let axes = axes_from_quat(slerp_quat(
+        quat_from_axes(rigid_axes(pose_a)),
+        quat_from_axes(rigid_axes(pose_b)),
+        blend,
+    ));
+    let translation = mix(pose_a[3].xyz, pose_b[3].xyz, blend);
+    return mat4x4<f32>(
+        vec4<f32>(axes[0], 0.0),
+        vec4<f32>(axes[1], 0.0),
+        vec4<f32>(axes[2], 0.0),
+        vec4<f32>(translation, 1.0),
+    );
+}
+
+fn matrix_skinned_position(position: vec3<f32>, joints: vec4<u32>, weights: vec4<f32>) -> vec3<f32> {
+    var skinned = vec3<f32>(0.0);
+    var weight_sum = 0.0;
+    for (var influence: u32 = 0u; influence < 4u; influence++) {
+        let weight = weights[influence];
+        if weight <= 0.0 {
+            continue;
+        }
+        skinned += (blended_bone_matrix(joints[influence]) * vec4<f32>(position, 1.0)).xyz * weight;
+        weight_sum += weight;
+    }
+    if weight_sum > 0.0 {
+        return skinned / weight_sum;
+    }
+    return position;
+}
+
+fn matrix_skinned_vector(direction: vec3<f32>, joints: vec4<u32>, weights: vec4<f32>) -> vec3<f32> {
+    var skinned = vec3<f32>(0.0);
+    var weight_sum = 0.0;
+    for (var influence: u32 = 0u; influence < 4u; influence++) {
+        let weight = weights[influence];
+        if weight <= 0.0 {
+            continue;
+        }
+        skinned += (blended_bone_matrix(joints[influence]) * vec4<f32>(direction, 0.0)).xyz * weight;
+        weight_sum += weight;
+    }
+    if weight_sum > 0.0 {
+        return skinned / weight_sum;
+    }
+    return direction;
+}
+#endif // MATRIX_SKIN
+
 @vertex
 fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
     var out: VertexOutput;
@@ -68,12 +251,33 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 
     let mesh_world_from_local = mesh_functions::get_world_from_local(vertex_no_morph.instance_index);
 
+// Dieselbe Matrix-Haut wie im Hauptpass. Tree-Alpha braucht die View-Normale,
+// deshalb läuft der teure Vertex-Shader hier ein zweites Mal.
+#ifdef MATRIX_SKIN
 #ifdef SKINNED
+    vertex.position = matrix_skinned_position(vertex.position, vertex.joint_indices, vertex.joint_weights);
+#ifdef VERTEX_NORMALS
+    vertex.normal = matrix_skinned_vector(vertex.normal, vertex.joint_indices, vertex.joint_weights);
+#endif
+#ifdef VERTEX_TANGENTS
+    vertex.tangent = vec4<f32>(
+        matrix_skinned_vector(vertex.tangent.xyz, vertex.joint_indices, vertex.joint_weights),
+        vertex.tangent.w,
+    );
+#endif
+#endif
+#endif
+
+#ifdef SKINNED
+#ifndef MATRIX_SKIN
     var world_from_local = skinning::skin_model(
         vertex.joint_indices,
         vertex.joint_weights,
         vertex_no_morph.instance_index
     );
+#else
+    var world_from_local = mesh_world_from_local;
+#endif
 #else // SKINNED
     // Use vertex_no_morph.instance_index instead of vertex.instance_index to work around a wgpu dx12 bug.
     // See https://github.com/gfx-rs/naga/issues/2416
@@ -98,7 +302,14 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
 #ifdef VERTEX_NORMALS
 #ifdef SKINNED
+#ifndef MATRIX_SKIN
     out.world_normal = skinning::skin_normals(world_from_local, vertex.normal);
+#else
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(
+        vertex.normal,
+        vertex_no_morph.instance_index
+    );
+#endif
 #else // SKINNED
     out.world_normal = mesh_functions::mesh_normal_local_to_world(
         vertex.normal,
@@ -126,7 +337,14 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
     // normal z. Pack that z into world_position.w for the lotus prepass fragment.
     var tree_normal: vec3<f32>;
 #ifdef SKINNED
+#ifndef MATRIX_SKIN
     tree_normal = skinning::skin_normals(world_from_local, vertex.normal);
+#else
+    tree_normal = mesh_functions::mesh_normal_local_to_world(
+        vertex.normal,
+        vertex_no_morph.instance_index
+    );
+#endif
 #else
     tree_normal = mesh_functions::mesh_normal_local_to_world(
         vertex.normal,
@@ -160,7 +378,7 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 
     // Take skinning into account.
 #ifdef SKINNED
-
+#ifndef MATRIX_SKIN
 #ifdef HAS_PREVIOUS_SKIN
     let prev_model = skinning::skin_prev_model(
         prev_vertex.joint_indices,
@@ -170,14 +388,23 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 #else   // HAS_PREVIOUS_SKIN
     let prev_model = mesh_functions::get_previous_world_from_local(prev_vertex.instance_index);
 #endif  // HAS_PREVIOUS_SKIN
-
+    let prev_position = prev_vertex.position;
+#else // MATRIX_SKIN
+    let prev_model = mesh_functions::get_previous_world_from_local(prev_vertex.instance_index);
+    let prev_position = matrix_skinned_position(
+        prev_vertex.position,
+        prev_vertex.joint_indices,
+        prev_vertex.joint_weights,
+    );
+#endif
 #else   // SKINNED
     let prev_model = mesh_functions::get_previous_world_from_local(prev_vertex.instance_index);
+    let prev_position = prev_vertex.position;
 #endif  // SKINNED
 
     out.previous_world_position = mesh_functions::mesh_position_local_to_world(
         prev_model,
-        vec4<f32>(prev_vertex.position, 1.0)
+        vec4<f32>(prev_position, 1.0)
     );
 #endif // MOTION_VECTOR_PREPASS
 
