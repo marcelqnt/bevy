@@ -182,7 +182,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // Sample the environment map.
     let environment_light = environment_map::environment_map_light(
-        &lighting_input, &clusterable_object_index_ranges, false);
+        &lighting_input, &clusterable_object_index_ranges, false, -1.0);
 
     // Accumulate the environment map light.
     indirect_light += view.exposure *

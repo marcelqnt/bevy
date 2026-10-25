@@ -58,6 +58,22 @@ const DITHER_THRESHOLD_MAP: vec4<u32> = vec4(
     0x050d070f
 );
 
+// Piecewise sRGB, matching the IEC curve. Used only for the legacy cubemap mix,
+// which blends in the same 8-bit gamma space as the old LOTUS shader.
+fn linear_to_srgb_clamped(linear_color: vec3<f32>) -> vec3<f32> {
+    let c = clamp(linear_color, vec3<f32>(0.0), vec3<f32>(1.0));
+    let low = c * 12.92;
+    let high = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(high, low, c <= vec3<f32>(0.0031308));
+}
+
+fn srgb_to_linear_clamped(srgb_color: vec3<f32>) -> vec3<f32> {
+    let c = clamp(srgb_color, vec3<f32>(0.0), vec3<f32>(1.0));
+    let low = c / 12.92;
+    let high = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(high, low, c <= vec3<f32>(0.04045));
+}
+
 // Processes a visibility range dither value and discards the fragment if
 // needed.
 //
@@ -737,6 +753,10 @@ fn apply_pbr_lighting(
 
     var indirect_light = vec3(0.0f);
     var found_diffuse_indirect = false;
+#ifdef ENVIRONMENT_MAP
+    // Specular cubemap kept aside when `environment_map_mix` replaces instead of adding.
+    var env_mix_sample = vec3(0.0);
+#endif
 
 #ifdef LIGHTMAP
     indirect_light += in.lightmap_light * diffuse_color;
@@ -780,11 +800,16 @@ fn apply_pbr_lighting(
             environment_map_lighting_input,
             &clusterable_object_index_ranges,
             found_diffuse_indirect,
+            in.environment_map_perceptual_roughness,
         );
 
         let environment_map_factor = in.environment_map_factor;
         indirect_light += environment_light.diffuse * diffuse_occlusion;
-        indirect_light += environment_light.specular * specular_occlusion * environment_map_factor;
+        if in.environment_map_mix >= 0.0 {
+            env_mix_sample = environment_light.specular;
+        } else {
+            indirect_light += environment_light.specular * specular_occlusion * environment_map_factor;
+        }
     }
 #endif  // ENVIRONMENT_MAP
 
@@ -851,6 +876,7 @@ fn apply_pbr_lighting(
         &transmissive_environment_light_input,
         &clusterable_object_index_ranges,
         false,
+        -1.0,
     );
 
 #ifdef STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
@@ -895,11 +921,30 @@ fn apply_pbr_lighting(
     }
 #endif
 
-    // Total light
-    output_color = vec4<f32>(
-        (view_bindings::view.exposure * (transmitted_light + direct_light + indirect_light)) + emissive_light,
-        output_color.a
-    );
+    // Total light. A non-negative mix weight replaces the exposed lighting with
+    // the cubemap sample, the same way the old LOTUS `mix(lit, cube, w)` did.
+    var exposed_light = view_bindings::view.exposure * (transmitted_light + direct_light + indirect_light);
+#ifdef ENVIRONMENT_MAP
+    if in.environment_map_mix >= 0.0 {
+        // The probe sample is linear HDR (radiance × probe intensity). The old
+        // cube was an 8-bit gamma image. Reinhard folds the HDR range into
+        // 0..1, then the blend itself happens in sRGB so shadows and highlights
+        // keep the old contrast. The result is converted back to linear for the
+        // framebuffer encode.
+        let cube_hdr = max(
+            view_bindings::view.exposure * env_mix_sample * in.environment_map_factor,
+            vec3<f32>(0.0),
+        );
+        let cube_ldr = cube_hdr / (vec3<f32>(1.0) + cube_hdr);
+        let mixed_srgb = mix(
+            linear_to_srgb_clamped(exposed_light),
+            linear_to_srgb_clamped(cube_ldr),
+            saturate(in.environment_map_mix),
+        );
+        exposed_light = srgb_to_linear_clamped(mixed_srgb);
+    }
+#endif
+    output_color = vec4<f32>(exposed_light + emissive_light, output_color.a);
 
     output_color = clustering::cluster_debug_visualization(
         output_color,

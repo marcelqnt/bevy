@@ -23,17 +23,32 @@ struct EnvironmentMapRadiances {
 
 #ifdef MULTIPLE_LIGHT_PROBES_IN_ARRAY
 
+fn specular_sample_roughness(
+    input: LayerLightingInput,
+    specular_perceptual_roughness: f32,
+) -> vec2<f32> {
+    if specular_perceptual_roughness >= 0.0 {
+        let perceptual = clamp(specular_perceptual_roughness, 0.0, 1.0);
+        // No 0.089 floor: 0 must stay a sharp mirror. The material path keeps
+        // that floor in `perceptualRoughnessToRoughness`.
+        return vec2<f32>(perceptual, perceptual * perceptual);
+    }
+    return vec2<f32>(input.perceptual_roughness, input.roughness);
+}
+
 fn compute_radiances(
     input: LayerLightingInput,
     clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
     world_position: vec3<f32>,
     found_diffuse_indirect: bool,
+    specular_perceptual_roughness: f32,
 ) -> EnvironmentMapRadiances {
     // Unpack.
     let N = input.N;
     let R = input.R;
-    let perceptual_roughness = input.perceptual_roughness;
-    let roughness = input.roughness;
+    let sample_roughness = specular_sample_roughness(input, specular_perceptual_roughness);
+    let perceptual_roughness = sample_roughness.x;
+    let roughness = sample_roughness.y;
 
     var radiances: EnvironmentMapRadiances;
 
@@ -101,17 +116,32 @@ fn compute_radiances(
 
 #else   // MULTIPLE_LIGHT_PROBES_IN_ARRAY
 
+fn specular_sample_roughness(
+    input: LayerLightingInput,
+    specular_perceptual_roughness: f32,
+) -> vec2<f32> {
+    if specular_perceptual_roughness >= 0.0 {
+        let perceptual = clamp(specular_perceptual_roughness, 0.0, 1.0);
+        // No 0.089 floor: 0 must stay a sharp mirror. The material path keeps
+        // that floor in `perceptualRoughnessToRoughness`.
+        return vec2<f32>(perceptual, perceptual * perceptual);
+    }
+    return vec2<f32>(input.perceptual_roughness, input.roughness);
+}
+
 fn compute_radiances(
     input: LayerLightingInput,
     clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
     world_position: vec3<f32>,
     found_diffuse_indirect: bool,
+    specular_perceptual_roughness: f32,
 ) -> EnvironmentMapRadiances {
     // Unpack.
     let N = input.N;
     let R = input.R;
-    let perceptual_roughness = input.perceptual_roughness;
-    let roughness = input.roughness;
+    let sample_roughness = specular_sample_roughness(input, specular_perceptual_roughness);
+    let perceptual_roughness = sample_roughness.x;
+    let roughness = sample_roughness.y;
 
     var radiances: EnvironmentMapRadiances;
 
@@ -193,6 +223,7 @@ fn environment_map_light_clearcoat(
         clusterable_object_index_ranges,
         world_position,
         found_diffuse_indirect,
+        -1.0,
     );
 
     // Composite the clearcoat layer on top of the existing one.
@@ -208,6 +239,10 @@ fn environment_map_light(
     input: ptr<function, LightingInput>,
     clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
     found_diffuse_indirect: bool,
+    // Negative: specular cubemap follows the material roughness and split-sum.
+    // Zero or positive: mip and reflection direction use this perceptual
+    // roughness, and `specular` is the raw sample.
+    specular_perceptual_roughness: f32,
 ) -> EnvironmentMapLight {
     // Unpack.
     let roughness = (*input).layers[LAYER_BASE].roughness;
@@ -224,6 +259,7 @@ fn environment_map_light(
         clusterable_object_index_ranges,
         world_position,
         found_diffuse_indirect,
+        specular_perceptual_roughness,
     );
 
     if (all(radiances.irradiance == vec3(0.0)) && all(radiances.radiance == vec3(0.0))) {
@@ -256,7 +292,11 @@ fn environment_map_light(
         out.diffuse = vec3(0.0);
     }
 
-    out.specular = FssEss * radiances.radiance;
+    if specular_perceptual_roughness >= 0.0 {
+        out.specular = radiances.radiance;
+    } else {
+        out.specular = FssEss * radiances.radiance;
+    }
 
 #ifdef STANDARD_MATERIAL_CLEARCOAT
     environment_map_light_clearcoat(

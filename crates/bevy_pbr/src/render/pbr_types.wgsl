@@ -115,9 +115,22 @@ struct PbrInput {
     // Individual material shaders set this on `PbrInput` before calling
     // `apply_pbr_lighting`.
     backed_shadow: f32,
-    // Per-material scale for environment-map specular (reflection) in `[0, 1]`.
-    // Diffuse IBL and ambient light are unaffected. Defaults to `1.0`.
+    // Scale for the specular environment cubemap. Diffuse IBL and ambient light
+    // are unaffected. Defaults to `1.0`.
+    //
+    // When `environment_map_perceptual_roughness` is negative, this scales the
+    // split-sum specular, which still follows the material roughness.
+    // When it is zero or positive, this scales the raw cubemap sample, so the
+    // intensity does not follow the material roughness.
     environment_map_factor: f32,
+    // Perceptual roughness of the specular cubemap sample only: `0` is sharp,
+    // `1` is the blurriest mip. Negative uses the material roughness and the
+    // split-sum weight. Defaults to `-1.0`.
+    environment_map_perceptual_roughness: f32,
+    // Negative: add the specular cubemap, scaled by `environment_map_factor`.
+    // Zero or positive: do not add it. After exposure, replace the lit color
+    // with `mix(lit, cubemap, this weight)`.
+    environment_map_mix: f32,
     light_mask: u32,
     // Raw night-texture color for LOTUS translumination. Zero leaves lighting unchanged.
     // The lotus shader sets this from one night-texture sample when flag bit 32 is set.
@@ -159,6 +172,8 @@ fn pbr_input_new() -> PbrInput {
     pbr_input.backed_shadow = 1.0;
 
     pbr_input.environment_map_factor = 1.0;
+    pbr_input.environment_map_perceptual_roughness = -1.0;
+    pbr_input.environment_map_mix = -1.0;
 
     pbr_input.flags = 0u;
 
