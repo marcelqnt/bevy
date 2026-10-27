@@ -1,4 +1,15 @@
 use crate::{primitives::Frustum, Camera, CameraProjection, OrthographicProjection, Projection};
+
+/// Cubemap faces drawn by one multiview pass.
+pub const CUBEMAP_MULTIVIEW_COUNT: u32 = 6;
+
+/// Six world-from-view transforms for one cubemap camera.
+///
+/// Face 0 matches the camera [`GlobalTransform`]. The render pass draws every face at once.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct CubemapMultiview {
+    pub world_from_views: [GlobalTransform; CUBEMAP_MULTIVIEW_COUNT as usize],
+}
 use bevy_ecs::prelude::*;
 use bevy_reflect::{std_traits::ReflectDefault, Reflect, ReflectDeserialize, ReflectSerialize};
 use bevy_transform::prelude::{GlobalTransform, Transform};

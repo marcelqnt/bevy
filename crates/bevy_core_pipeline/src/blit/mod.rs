@@ -4,7 +4,7 @@ use bevy_asset::{embedded_asset, load_embedded_asset, AssetServer, Handle};
 use bevy_ecs::prelude::*;
 use bevy_render::{
     render_resource::{
-        binding_types::{sampler, texture_2d},
+        binding_types::{sampler, texture_2d, texture_2d_array},
         *,
     },
     renderer::RenderDevice,
@@ -12,6 +12,7 @@ use bevy_render::{
 };
 use bevy_shader::Shader;
 use bevy_utils::default;
+use core::num::NonZeroU32;
 
 /// Adds support for specialized "blit pipelines", which can be used to write one texture to another.
 pub struct BlitPlugin;
@@ -34,6 +35,7 @@ impl Plugin for BlitPlugin {
 #[derive(Resource)]
 pub struct BlitPipeline {
     pub layout: BindGroupLayout,
+    pub multiview_layout: BindGroupLayout,
     pub sampler: Sampler,
     pub fullscreen_shader: FullscreenShader,
     pub fragment_shader: Handle<Shader>,
@@ -56,10 +58,22 @@ pub fn init_blit_pipeline(
         ),
     );
 
+    let multiview_layout = render_device.create_bind_group_layout(
+        "blit_multiview_bind_group_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_2d_array(TextureSampleType::Float { filterable: false }),
+                sampler(SamplerBindingType::NonFiltering),
+            ),
+        ),
+    );
+
     let sampler = render_device.create_sampler(&SamplerDescriptor::default());
 
     commands.insert_resource(BlitPipeline {
         layout,
+        multiview_layout,
         sampler,
         fullscreen_shader: fullscreen_shader.clone(),
         fragment_shader: load_embedded_asset!(asset_server.as_ref(), "blit.wgsl"),
@@ -78,6 +92,18 @@ impl BlitPipeline {
             &BindGroupEntries::sequential((src_texture, &self.sampler)),
         )
     }
+
+    pub fn create_multiview_bind_group(
+        &self,
+        render_device: &RenderDevice,
+        src_texture: &TextureView,
+    ) -> BindGroup {
+        render_device.create_bind_group(
+            None,
+            &self.multiview_layout,
+            &BindGroupEntries::sequential((src_texture, &self.sampler)),
+        )
+    }
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
@@ -85,6 +111,7 @@ pub struct BlitPipelineKey {
     pub texture_format: TextureFormat,
     pub blend_state: Option<BlendState>,
     pub samples: u32,
+    pub multiview: bool,
 }
 
 impl SpecializedRenderPipeline for BlitPipeline {
@@ -93,16 +120,29 @@ impl SpecializedRenderPipeline for BlitPipeline {
     fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
         RenderPipelineDescriptor {
             label: Some("blit pipeline".into()),
-            layout: vec![self.layout.clone()],
+            layout: vec![if key.multiview {
+                self.multiview_layout.clone()
+            } else {
+                self.layout.clone()
+            }],
             vertex: self.fullscreen_shader.to_vertex_state(),
             fragment: Some(FragmentState {
                 shader: self.fragment_shader.clone(),
+                shader_defs: if key.multiview {
+                    vec!["MULTIVIEW".into()]
+                } else {
+                    Vec::new()
+                },
                 targets: vec![Some(ColorTargetState {
                     format: key.texture_format,
                     blend: key.blend_state,
                     write_mask: ColorWrites::ALL,
                 })],
                 ..default()
+            }),
+            multiview: key.multiview.then(|| {
+                NonZeroU32::new(bevy_camera::CUBEMAP_MULTIVIEW_COUNT)
+                    .expect("cubemap view count is non-zero")
             }),
             multisample: MultisampleState {
                 count: key.samples,

@@ -1,6 +1,6 @@
 use crate::blit::{BlitPipeline, BlitPipelineKey};
 use bevy_app::prelude::*;
-use bevy_camera::CameraOutputMode;
+use bevy_camera::{CameraOutputMode, CubemapMultiview};
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashSet;
 use bevy_render::{
@@ -39,10 +39,15 @@ fn prepare_view_upscaling_pipelines(
     mut pipeline_cache: ResMut<PipelineCache>,
     mut pipelines: ResMut<SpecializedRenderPipelines<BlitPipeline>>,
     blit_pipeline: Res<BlitPipeline>,
-    view_targets: Query<(Entity, &ViewTarget, Option<&ExtractedCamera>)>,
+    view_targets: Query<(
+        Entity,
+        &ViewTarget,
+        Option<&ExtractedCamera>,
+        Has<CubemapMultiview>,
+    )>,
 ) {
     let mut output_textures = <HashSet<_>>::default();
-    for (entity, view_target, camera) in view_targets.iter() {
+    for (entity, view_target, camera, cubemap_multiview) in view_targets.iter() {
         let out_texture_id = view_target.out_texture().id();
         let blend_state = if let Some(extracted_camera) = camera {
             match extracted_camera.output_mode {
@@ -75,6 +80,7 @@ fn prepare_view_upscaling_pipelines(
             texture_format: view_target.out_texture_format(),
             blend_state,
             samples: 1,
+            multiview: cubemap_multiview,
         };
         let pipeline = pipelines.specialize(&pipeline_cache, &blit_pipeline, key);
 

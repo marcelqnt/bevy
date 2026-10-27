@@ -11,10 +11,10 @@ fn oit_draw(position: vec4f, color: vec4f) {
         return;
     }
     // get the index of the current fragment relative to the screen size
-    let screen_index = i32(floor(position.x) + floor(position.y) * view.viewport.z);
+    let screen_index = i32(floor(position.x) + floor(position.y) * view().viewport.z);
     // get the size of the buffer.
     // It's always the size of the screen
-    let buffer_size = i32(view.viewport.z * view.viewport.w);
+    let buffer_size = i32(view().viewport.z * view().viewport.w);
 
     // gets the layer index of the current fragment
     var layer_id = atomicAdd(&oit_layer_ids[screen_index], 1);

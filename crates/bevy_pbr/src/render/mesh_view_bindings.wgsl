@@ -6,7 +6,30 @@
     globals::Globals,
 }
 
-@group(0) @binding(0) var<uniform> view: View;
+#ifdef MULTIVIEW
+@group(0) @binding(0) var<uniform> view_uniform: array<View, 6>;
+var<private> current_multiview_index: u32 = 0u;
+
+fn set_multiview_index(index: u32) {
+    current_multiview_index = index;
+}
+
+fn multiview_index() -> u32 {
+    return current_multiview_index;
+}
+
+fn view() -> View {
+    return view_uniform[current_multiview_index];
+}
+#else
+@group(0) @binding(0) var<uniform> view_uniform: View;
+
+fn set_multiview_index(_index: u32) {}
+
+fn view() -> View {
+    return view_uniform;
+}
+#endif
 @group(0) @binding(1) var<uniform> lights: types::Lights;
 #ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
 @group(0) @binding(2) var point_shadow_textures: texture_depth_cube;

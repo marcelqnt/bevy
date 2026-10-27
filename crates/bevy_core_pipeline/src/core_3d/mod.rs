@@ -72,7 +72,7 @@ pub const DEPTH_TEXTURE_SAMPLING_SUPPORTED: bool = true;
 
 use core::ops::Range;
 
-use bevy_camera::{Camera, Camera3d, Camera3dDepthLoadOp};
+use bevy_camera::{Camera, Camera3d, Camera3dDepthLoadOp, CubemapMultiview, CUBEMAP_MULTIVIEW_COUNT};
 use bevy_render::{
     batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport},
     camera::CameraRenderGraph,
@@ -784,10 +784,11 @@ pub fn prepare_core_3d_depth_textures(
         Option<&DepthPrepass>,
         &Camera3d,
         &Msaa,
+        Option<&CubemapMultiview>,
     )>,
 ) {
     let mut render_target_usage = <HashMap<_, _>>::default();
-    for (_, camera, extracted_view, depth_prepass, camera_3d, _msaa) in &views_3d {
+    for (_, camera, extracted_view, depth_prepass, camera_3d, _msaa, _) in &views_3d {
         if !opaque_3d_phases.contains_key(&extracted_view.retained_view_entity)
             || !alpha_mask_3d_phases.contains_key(&extracted_view.retained_view_entity)
             || !transmissive_3d_phases.contains_key(&extracted_view.retained_view_entity)
@@ -809,13 +810,18 @@ pub fn prepare_core_3d_depth_textures(
     }
 
     let mut textures = <HashMap<_, _>>::default();
-    for (entity, camera, _, _, camera_3d, msaa) in &views_3d {
+    for (entity, camera, _, _, camera_3d, msaa, cubemap_multiview) in &views_3d {
         let Some(physical_target_size) = camera.physical_target_size else {
             continue;
         };
 
+        let mut target_extent = physical_target_size.to_extents();
+        if cubemap_multiview.is_some() {
+            target_extent.depth_or_array_layers = CUBEMAP_MULTIVIEW_COUNT;
+        }
+
         let cached_texture = textures
-            .entry((camera.target.clone(), msaa))
+            .entry((camera.target.clone(), msaa, cubemap_multiview.is_some()))
             .or_insert_with(|| {
                 let usage = *render_target_usage
                     .get(&camera.target.clone())
@@ -824,7 +830,7 @@ pub fn prepare_core_3d_depth_textures(
                 let descriptor = TextureDescriptor {
                     label: Some("view_depth_texture"),
                     // The size of the depth texture
-                    size: physical_target_size.to_extents(),
+                    size: target_extent,
                     mip_level_count: 1,
                     sample_count: msaa.samples(),
                     dimension: TextureDimension::D2,

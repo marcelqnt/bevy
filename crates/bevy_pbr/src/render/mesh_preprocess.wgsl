@@ -132,7 +132,7 @@ fn view_frustum_intersects_obb(
 
     for (var i = 0; i < 5; i += 1) {
         // Calculate relative radius of the sphere associated with this plane.
-        let plane_normal = view.frustum[i];
+        let plane_normal = view().frustum[i];
         let relative_radius = dot(
             abs(
                 vec3(
@@ -218,7 +218,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // `previous_input_index` (in fact, we can't; that index are only valid for
     // one frame and will be invalid).
     let timestamp = current_input[input_index].timestamp;
-    let mesh_changed_this_frame = timestamp == view.frame_count;
+    let mesh_changed_this_frame = timestamp == view().frame_count;
 
     // Look up the previous model matrix, if it could have been.
     let previous_input_index = current_input[input_index].previous_input_index;
@@ -282,7 +282,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 #ifdef EARLY_PHASE
     max_depth_view = min(-previous_view_uniforms.clip_from_view[3][2], max_depth_view);
 #else   // EARLY_PHASE
-    max_depth_view = min(-view.clip_from_view[3][2], max_depth_view);
+    max_depth_view = min(-view().clip_from_view[3][2], max_depth_view);
 #endif  // EARLY_PHASE
 
     // Figure out the depth of the occluder, and compare it to our own depth.

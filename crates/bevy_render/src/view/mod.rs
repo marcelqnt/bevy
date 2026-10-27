@@ -2,8 +2,8 @@ pub mod visibility;
 pub mod window;
 
 use bevy_camera::{
-    primitives::Frustum, CameraMainTextureUsages, ClearColor, ClearColorConfig, Exposure,
-    MainPassResolutionOverride, NormalizedRenderTarget,
+    primitives::Frustum, CameraMainTextureUsages, ClearColor, ClearColorConfig, CubemapMultiview,
+    Exposure, MainPassResolutionOverride, NormalizedRenderTarget, CUBEMAP_MULTIVIEW_COUNT,
 };
 use bevy_diagnostic::FrameCount;
 pub use visibility::*;
@@ -15,7 +15,7 @@ use crate::{
     extract_component::ExtractComponentPlugin,
     render_asset::RenderAssets,
     render_phase::ViewRangefinder3d,
-    render_resource::{DynamicUniformBuffer, ShaderType, Texture, TextureView},
+    render_resource::{DynamicUniformBuffer, ShaderType, Texture, TextureView, UniformBuffer},
     renderer::{RenderDevice, RenderQueue},
     sync_world::MainEntity,
     texture::{
@@ -136,6 +136,7 @@ impl Plugin for ViewPlugin {
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .init_resource::<ViewUniforms>()
+                .init_resource::<MultiviewViewUniforms>()
                 .init_resource::<ViewTargetAttachments>();
         }
     }
@@ -601,6 +602,12 @@ pub struct ViewUniformOffset {
     pub offset: u32,
 }
 
+/// Tightly packed view uniforms for cubemap multiview cameras, one [`ViewUniform`] per face.
+#[derive(Resource, Default)]
+pub struct MultiviewViewUniforms {
+    pub buffers: HashMap<Entity, UniformBuffer<[ViewUniform; CUBEMAP_MULTIVIEW_COUNT as usize]>>,
+}
+
 #[derive(Component)]
 pub struct ViewTarget {
     main_textures: MainTargetTextures,
@@ -894,6 +901,7 @@ pub fn prepare_view_uniforms(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut view_uniforms: ResMut<ViewUniforms>,
+    mut multiview_view_uniforms: ResMut<MultiviewViewUniforms>,
     views: Query<(
         Entity,
         Option<&ExtractedCamera>,
@@ -902,6 +910,7 @@ pub fn prepare_view_uniforms(
         Option<&TemporalJitter>,
         Option<&MipBias>,
         Option<&MainPassResolutionOverride>,
+        Option<&CubemapMultiview>,
     )>,
     frame_count: Res<FrameCount>,
 ) {
@@ -914,6 +923,7 @@ pub fn prepare_view_uniforms(
     else {
         return;
     };
+    multiview_view_uniforms.buffers.clear();
     for (
         entity,
         extracted_camera,
@@ -922,6 +932,7 @@ pub fn prepare_view_uniforms(
         temporal_jitter,
         mip_bias,
         resolution_override,
+        cubemap_multiview,
     ) in &views
     {
         let viewport = extracted_view.viewport.as_vec4();
@@ -955,29 +966,53 @@ pub fn prepare_view_uniforms(
             .map(|frustum| frustum.half_spaces.map(|h| h.normal_d()))
             .unwrap_or([Vec4::ZERO; 6]);
 
-        let view_uniforms = ViewUniformOffset {
-            offset: writer.write(&ViewUniform {
-                clip_from_world,
-                unjittered_clip_from_world: unjittered_projection * view_from_world,
-                world_from_clip: world_from_view * view_from_clip,
-                world_from_view,
-                view_from_world,
-                clip_from_view,
-                view_from_clip,
-                world_position: extracted_view.world_from_view.translation(),
-                exposure: extracted_camera
-                    .map(|c| c.exposure)
-                    .unwrap_or_else(|| Exposure::default().exposure()),
-                viewport,
-                main_pass_viewport,
-                frustum,
-                color_grading: extracted_view.color_grading.clone().into(),
-                mip_bias: mip_bias.unwrap_or(&MipBias(0.0)).0,
-                frame_count: frame_count.0,
-            }),
+        let view_uniform = ViewUniform {
+            clip_from_world,
+            unjittered_clip_from_world: unjittered_projection * view_from_world,
+            world_from_clip: world_from_view * view_from_clip,
+            world_from_view,
+            view_from_world,
+            clip_from_view,
+            view_from_clip,
+            world_position: extracted_view.world_from_view.translation(),
+            exposure: extracted_camera
+                .map(|c| c.exposure)
+                .unwrap_or_else(|| Exposure::default().exposure()),
+            viewport,
+            main_pass_viewport,
+            frustum,
+            color_grading: extracted_view.color_grading.clone().into(),
+            mip_bias: mip_bias.unwrap_or(&MipBias(0.0)).0,
+            frame_count: frame_count.0,
         };
 
-        commands.entity(entity).insert(view_uniforms);
+        if let Some(cubemap_multiview) = cubemap_multiview {
+            let mut face_uniforms =
+                core::array::from_fn(|_| view_uniform.clone());
+            for (face_uniform, world_from_view) in face_uniforms
+                .iter_mut()
+                .zip(cubemap_multiview.world_from_views)
+            {
+                let world_from_view = world_from_view.to_matrix();
+                let view_from_world = world_from_view.inverse();
+                let view_from_clip = clip_from_view.inverse();
+                face_uniform.world_from_view = world_from_view;
+                face_uniform.view_from_world = view_from_world;
+                face_uniform.clip_from_world = clip_from_view * view_from_world;
+                face_uniform.unjittered_clip_from_world = face_uniform.clip_from_world;
+                face_uniform.world_from_clip = world_from_view * view_from_clip;
+                face_uniform.view_from_clip = view_from_clip;
+                face_uniform.world_position = world_from_view.w_axis.xyz();
+            }
+            let mut buffer = UniformBuffer::from(face_uniforms);
+            buffer.set_label(Some("cubemap_multiview_view_uniforms"));
+            buffer.write_buffer(&render_device, &render_queue);
+            multiview_view_uniforms.buffers.insert(entity, buffer);
+        }
+
+        commands.entity(entity).insert(ViewUniformOffset {
+            offset: writer.write(&view_uniform),
+        });
     }
 }
 
@@ -1038,11 +1073,12 @@ pub fn prepare_view_targets(
         &ExtractedView,
         &CameraMainTextureUsages,
         &Msaa,
+        Option<&CubemapMultiview>,
     )>,
     view_target_attachments: Res<ViewTargetAttachments>,
 ) {
     let mut textures = <HashMap<_, _>>::default();
-    for (entity, camera, view, texture_usage, msaa) in cameras.iter() {
+    for (entity, camera, view, texture_usage, msaa, cubemap_multiview) in cameras.iter() {
         let (Some(target_size), Some(target)) = (camera.physical_target_size, &camera.target)
         else {
             continue;
@@ -1064,12 +1100,23 @@ pub fn prepare_view_targets(
             _ => Some(clear_color_global.0),
         };
 
+        let mut target_extent = target_size.to_extents();
+        if cubemap_multiview.is_some() {
+            target_extent.depth_or_array_layers = CUBEMAP_MULTIVIEW_COUNT;
+        }
+
         let (a, b, sampled, main_texture) = textures
-            .entry((camera.target.clone(), texture_usage.0, view.hdr, msaa))
+            .entry((
+                camera.target.clone(),
+                texture_usage.0,
+                view.hdr,
+                msaa,
+                cubemap_multiview.is_some(),
+            ))
             .or_insert_with(|| {
                 let descriptor = TextureDescriptor {
                     label: None,
-                    size: target_size.to_extents(),
+                    size: target_extent,
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: TextureDimension::D2,
@@ -1100,7 +1147,7 @@ pub fn prepare_view_targets(
                         &render_device,
                         TextureDescriptor {
                             label: Some("main_texture_sampled"),
-                            size: target_size.to_extents(),
+                            size: target_extent,
                             mip_level_count: 1,
                             sample_count: msaa.samples(),
                             dimension: TextureDimension::D2,

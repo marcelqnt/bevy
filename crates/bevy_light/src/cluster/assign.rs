@@ -3,7 +3,7 @@
 use bevy_camera::{
     primitives::{Aabb, Frustum, HalfSpace, Sphere},
     visibility::{RenderLayers, ViewVisibility},
-    Camera,
+    Camera, CubemapMultiview,
 };
 use bevy_ecs::{
     entity::Entity,
@@ -153,6 +153,7 @@ pub(crate) fn assign_objects_to_clusters(
         &mut Clusters,
         Option<&RenderLayers>,
         Option<&mut VisibleClusterableObjects>,
+        Option<&CubemapMultiview>,
     )>,
     point_lights_query: Query<(
         Entity,
@@ -308,7 +309,7 @@ pub(crate) fn assign_objects_to_clusters(
         // those that affect at least one of our views
         let frusta: Vec<_> = views
             .iter()
-            .map(|(_, _, _, frustum, _, _, _, _)| *frustum)
+            .map(|(_, _, _, frustum, _, _, _, _, _)| *frustum)
             .collect();
         let mut clusterable_objects_in_view_count = 0;
         clusterable_objects.retain(|clusterable_object| {
@@ -355,6 +356,7 @@ pub(crate) fn assign_objects_to_clusters(
         clusters,
         maybe_layers,
         mut visible_clusterable_objects,
+        cubemap_multiview,
     ) in &mut views
     {
         let view_layers = maybe_layers.unwrap_or_default();
@@ -520,9 +522,13 @@ pub(crate) fn assign_objects_to_clusters(
         }
         let cluster_count =
             (clusters.dimensions.x * clusters.dimensions.y * clusters.dimensions.z) as usize;
+        let face_count = if cubemap_multiview.is_some() { 6 } else { 1 };
         clusters
             .clusterable_objects
-            .resize_with(cluster_count, VisibleClusterableObjects::default);
+            .resize_with(
+                cluster_count * face_count,
+                VisibleClusterableObjects::default,
+            );
 
         // Calculate the x/y/z cluster frustum planes in view space
         let mut x_planes = Vec::with_capacity(clusters.dimensions.x as usize + 1);
@@ -581,9 +587,10 @@ pub(crate) fn assign_objects_to_clusters(
             z_planes.push(HalfSpace::new(normal.extend(d)));
         }
 
-        let mut update_from_object_intersections = |visible_clusterable_objects: &mut Vec<
-            Entity,
-        >| {
+        let mut update_from_object_intersections = |visible_clusterable_objects: &mut Vec<Entity>,
+                                                    view_from_world: Mat4,
+                                                    face_frustum: &Frustum,
+                                                    cluster_base: usize| {
             for clusterable_object in &clusterable_objects {
                 // check if the clusterable light layers overlap the view layers
                 if !view_layers.intersects(&clusterable_object.render_layers) {
@@ -593,7 +600,7 @@ pub(crate) fn assign_objects_to_clusters(
                 let clusterable_object_sphere = clusterable_object.sphere();
 
                 // Check if the clusterable object is within the view frustum
-                if !frustum.intersects_sphere(&clusterable_object_sphere, true) {
+                if !face_frustum.intersects_sphere(&clusterable_object_sphere, true) {
                     continue;
                 }
 
@@ -602,7 +609,9 @@ pub(crate) fn assign_objects_to_clusters(
                 global_clusterable_objects
                     .entities
                     .insert(clusterable_object.entity);
-                visible_clusterable_objects.push(clusterable_object.entity);
+                if !visible_clusterable_objects.contains(&clusterable_object.entity) {
+                    visible_clusterable_objects.push(clusterable_object.entity);
+                }
 
                 // note: caching seems to be slower than calling twice for this aabb calculation
                 let (
@@ -740,7 +749,8 @@ pub(crate) fn assign_objects_to_clusters(
                         }
                         let mut cluster_index = ((y * clusters.dimensions.x + min_x)
                             * clusters.dimensions.z
-                            + z) as usize;
+                            + z) as usize
+                            + cluster_base;
 
                         match clusterable_object.object_type {
                             ClusterableObjectType::SpotLight { .. } => {
@@ -837,13 +847,37 @@ pub(crate) fn assign_objects_to_clusters(
             }
         };
 
+        let mut assign_visible = |visible_clusterable_objects: &mut Vec<Entity>| {
+            if let Some(multiview) = cubemap_multiview {
+                for face in 0..multiview.world_from_views.len() {
+                    let world_from_view = multiview.world_from_views[face].affine();
+                    let face_view_from_world = Mat4::from(world_from_view.inverse());
+                    let clip_from_world = camera.clip_from_view() * face_view_from_world;
+                    let face_frustum = Frustum::from_clip_from_world(&clip_from_world);
+                    update_from_object_intersections(
+                        visible_clusterable_objects,
+                        face_view_from_world,
+                        &face_frustum,
+                        face * cluster_count,
+                    );
+                }
+            } else {
+                update_from_object_intersections(
+                    visible_clusterable_objects,
+                    view_from_world,
+                    frustum,
+                    0,
+                );
+            }
+        };
+
         // reuse existing visible clusterable objects Vec, if it exists
         if let Some(visible_clusterable_objects) = visible_clusterable_objects.as_mut() {
             visible_clusterable_objects.entities.clear();
-            update_from_object_intersections(&mut visible_clusterable_objects.entities);
+            assign_visible(&mut visible_clusterable_objects.entities);
         } else {
             let mut entities = Vec::new();
-            update_from_object_intersections(&mut entities);
+            assign_visible(&mut entities);
             commands
                 .entity(view_entity)
                 .insert(VisibleClusterableObjects {

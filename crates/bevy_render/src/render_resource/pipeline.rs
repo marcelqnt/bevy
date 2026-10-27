@@ -6,6 +6,7 @@ use bevy_asset::Handle;
 use bevy_mesh::VertexBufferLayout;
 use bevy_shader::{Shader, ShaderDefVal};
 use core::iter;
+use core::num::NonZeroU32;
 use core::ops::Deref;
 use thiserror::Error;
 use wgpu::{
@@ -110,6 +111,11 @@ pub struct RenderPipelineDescriptor {
     /// Whether to zero-initialize workgroup memory by default. If you're not sure, set this to true.
     /// If this is false, reading from workgroup variables before writing to them will result in garbage values.
     pub zero_initialize_workgroup_memory: bool,
+    /// When set, the pipeline draws this many views in one pass.
+    ///
+    /// Every color and depth attachment of the pass must be a 2D texture array with the same
+    /// layer count. `None` keeps the pipeline single-view.
+    pub multiview: Option<NonZeroU32>,
 }
 
 #[derive(Copy, Clone, Debug, Error)]

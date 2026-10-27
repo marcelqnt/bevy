@@ -26,7 +26,7 @@ use bevy_render::{
     renderer::{RenderAdapter, RenderDevice},
     texture::{FallbackImage, FallbackImageMsaa, FallbackImageZero, GpuImage},
     view::{
-        Msaa, RenderVisibilityRanges, ViewUniform, ViewUniforms,
+        Msaa, MultiviewViewUniforms, RenderVisibilityRanges, ViewUniform, ViewUniforms,
         VISIBILITY_RANGES_STORAGE_BUFFER_COUNT,
     },
 };
@@ -81,6 +81,7 @@ bitflags::bitflags! {
         const MOTION_VECTOR_PREPASS       = 1 << 3;
         const DEFERRED_PREPASS            = 1 << 4;
         const OIT_ENABLED                 = 1 << 5;
+        const MULTIVIEW                   = 1 << 6;
     }
 }
 
@@ -93,7 +94,7 @@ impl MeshPipelineViewLayoutKey {
         use MeshPipelineViewLayoutKey as Key;
 
         format!(
-            "mesh_view_layout{}{}{}{}{}{}",
+            "mesh_view_layout{}{}{}{}{}{}{}",
             if self.contains(Key::MULTISAMPLED) {
                 "_multisampled"
             } else {
@@ -124,6 +125,11 @@ impl MeshPipelineViewLayoutKey {
             } else {
                 Default::default()
             },
+            if self.contains(Key::MULTIVIEW) {
+                "_multiview"
+            } else {
+                Default::default()
+            },
         )
     }
 }
@@ -149,6 +155,9 @@ impl From<MeshPipelineKey> for MeshPipelineViewLayoutKey {
         }
         if value.contains(MeshPipelineKey::OIT_ENABLED) {
             result |= MeshPipelineViewLayoutKey::OIT_ENABLED;
+        }
+        if value.contains(MeshPipelineKey::MULTIVIEW) {
+            result |= MeshPipelineViewLayoutKey::MULTIVIEW;
         }
 
         result
@@ -225,7 +234,14 @@ fn layout_entries(
             // View
             (
                 0,
-                uniform_buffer::<ViewUniform>(true).visibility(ShaderStages::VERTEX_FRAGMENT),
+                if layout_key.contains(MeshPipelineViewLayoutKey::MULTIVIEW) {
+                    uniform_buffer::<[ViewUniform; bevy_camera::CUBEMAP_MULTIVIEW_COUNT as usize]>(
+                        false,
+                    )
+                    .visibility(ShaderStages::VERTEX_FRAGMENT)
+                } else {
+                    uniform_buffer::<ViewUniform>(true).visibility(ShaderStages::VERTEX_FRAGMENT)
+                },
             ),
             // Lights
             (1, uniform_buffer::<GpuLights>(true)),
@@ -545,7 +561,11 @@ pub fn prepare_mesh_view_bind_groups(
     shadow_samplers: Res<ShadowSamplers>,
     (light_meta, global_light_meta): (Res<LightMeta>, Res<GlobalClusterableObjectMeta>),
     fog_meta: Res<FogMeta>,
-    (view_uniforms, environment_map_uniform): (Res<ViewUniforms>, Res<EnvironmentMapUniformBuffer>),
+    (view_uniforms, environment_map_uniform, multiview_view_uniforms): (
+        Res<ViewUniforms>,
+        Res<EnvironmentMapUniformBuffer>,
+        Res<MultiviewViewUniforms>,
+    ),
     views: Query<(
         Entity,
         &ViewShadowBindings,
@@ -622,10 +642,19 @@ pub fn prepare_mesh_view_bind_groups(
                 layout_key |= MeshPipelineViewLayoutKey::OIT_ENABLED;
             }
 
+            let multiview_view_binding = multiview_view_uniforms
+                .buffers
+                .get(&entity)
+                .and_then(|buffer| buffer.binding());
+            if multiview_view_binding.is_some() {
+                layout_key |= MeshPipelineViewLayoutKey::MULTIVIEW;
+            }
+            let view_binding_for_group = multiview_view_binding.unwrap_or(view_binding.clone());
+
             let layout = mesh_pipeline.get_view_layout(layout_key);
 
             let mut entries = DynamicBindGroupEntries::new_with_indices((
-                (0, view_binding.clone()),
+                (0, view_binding_for_group),
                 (1, light_binding.clone()),
                 (2, &shadow_bindings.point_light_depth_texture_view),
                 (3, &shadow_samplers.point_light_comparison_sampler),

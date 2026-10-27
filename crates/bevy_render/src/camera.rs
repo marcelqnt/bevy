@@ -434,7 +434,10 @@ pub fn extract_cameras(
             Option<&MipBias>,
             Option<&RenderLayers>,
             Option<&Projection>,
-            Has<NoIndirectDrawing>,
+            (
+                Has<NoIndirectDrawing>,
+                Option<&bevy_camera::CubemapMultiview>,
+            ),
         )>,
     >,
     primary_window: Extract<Query<Entity, With<PrimaryWindow>>>,
@@ -452,6 +455,7 @@ pub fn extract_cameras(
         Projection,
         NoIndirectDrawing,
         ViewUniformOffset,
+        bevy_camera::CubemapMultiview,
     );
     for (
         main_entity,
@@ -468,7 +472,7 @@ pub fn extract_cameras(
         mip_bias,
         render_layers,
         projection,
-        no_indirect_drawing,
+        (no_indirect_drawing, cubemap_multiview),
     ) in query.iter()
     {
         if !camera.is_active {
@@ -590,6 +594,12 @@ pub fn extract_cameras(
                 commands.insert(NoIndirectDrawing);
             } else {
                 commands.remove::<NoIndirectDrawing>();
+            }
+
+            if let Some(cubemap_multiview) = cubemap_multiview {
+                commands.insert(*cubemap_multiview);
+            } else {
+                commands.remove::<bevy_camera::CubemapMultiview>();
             }
         };
     }

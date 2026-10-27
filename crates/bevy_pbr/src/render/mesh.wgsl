@@ -7,6 +7,10 @@
     view_transformations::position_world_to_clip,
 }
 
+#ifdef MULTIVIEW
+#import bevy_pbr::mesh_view_bindings::set_multiview_index
+#endif
+
 #ifdef MORPH_TARGETS
 fn morph_vertex(vertex_in: Vertex) -> Vertex {
     var vertex = vertex_in;
@@ -32,7 +36,15 @@ fn morph_vertex(vertex_in: Vertex) -> Vertex {
 #endif
 
 @vertex
-fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
+fn vertex(
+#ifdef MULTIVIEW
+    @builtin(view_index) view_index: i32,
+#endif
+    vertex_no_morph: Vertex,
+) -> VertexOutput {
+#ifdef MULTIVIEW
+    set_multiview_index(u32(view_index));
+#endif
     var out: VertexOutput;
 
 #ifdef MORPH_TARGETS

@@ -67,7 +67,7 @@ fn fragment(
 #ifdef VERTEX_COLORS
     var color = in.color;
 #ifdef TONEMAP_IN_SHADER
-    color = tonemapping::tone_mapping(color, view.color_grading);
+    color = tonemapping::tone_mapping(color, view().color_grading);
 #endif
     return color;
 #else

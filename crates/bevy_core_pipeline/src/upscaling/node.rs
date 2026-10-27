@@ -1,5 +1,6 @@
 use crate::{blit::BlitPipeline, upscaling::ViewUpscalingPipeline};
-use bevy_camera::{CameraOutputMode, ClearColor, ClearColorConfig};
+use bevy_camera::{CameraOutputMode, ClearColor, ClearColorConfig, CubemapMultiview};
+use bevy_ecs::query::Has;
 use bevy_ecs::{prelude::*, query::QueryItem};
 use bevy_render::{
     camera::ExtractedCamera,
@@ -21,13 +22,14 @@ impl ViewNode for UpscalingNode {
         &'static ViewTarget,
         &'static ViewUpscalingPipeline,
         Option<&'static ExtractedCamera>,
+        Has<CubemapMultiview>,
     );
 
     fn run(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext,
-        (target, upscaling_target, camera): QueryItem<Self::ViewQuery>,
+        (target, upscaling_target, camera, cubemap_multiview): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -57,8 +59,15 @@ impl ViewNode for UpscalingNode {
         let bind_group = match &mut *cached_bind_group {
             Some((id, bind_group)) if main_texture_view.id() == *id => bind_group,
             cached_bind_group => {
-                let bind_group = blit_pipeline
-                    .create_bind_group(render_context.render_device(), main_texture_view);
+                let bind_group = if cubemap_multiview {
+                    blit_pipeline.create_multiview_bind_group(
+                        render_context.render_device(),
+                        main_texture_view,
+                    )
+                } else {
+                    blit_pipeline
+                        .create_bind_group(render_context.render_device(), main_texture_view)
+                };
 
                 let (_, bind_group) =
                     cached_bind_group.insert((main_texture_view.id(), bind_group));

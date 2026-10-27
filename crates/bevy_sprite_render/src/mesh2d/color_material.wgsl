@@ -44,7 +44,7 @@ fn fragment(
     output_color = alpha_discard(material, output_color);
 
 #ifdef TONEMAP_IN_SHADER
-    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
+    output_color = tonemapping::tone_mapping(output_color, view().color_grading);
 #endif
     return output_color;
 }

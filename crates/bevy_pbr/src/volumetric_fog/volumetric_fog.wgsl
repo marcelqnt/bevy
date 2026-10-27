@@ -124,7 +124,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let jitter_strength = volumetric_fog.jitter_strength;
 
     // Unpack the view.
-    let exposure = view.exposure;
+    let exposure = view().exposure;
 
     // Sample the depth to put an upper bound on the length of the ray (as we
     // shouldn't trace through solid objects). If this is multisample, just use
@@ -184,7 +184,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let Rd_ndc = vec3(frag_coord_to_ndc(position).xy, 1.0);
     let Rd_view = normalize(position_ndc_to_view(Rd_ndc));
     var Ro_world = position_view_to_world(view_start_pos.xyz);
-    let Rd_world = normalize(position_ndc_to_world(Rd_ndc) - view.world_position);
+    let Rd_world = normalize(position_ndc_to_world(Rd_ndc) - view().world_position);
 
     // Offset by jitter.
     let jitter = interleaved_gradient_noise(position.xy, globals.frame_count) * jitter_strength;
@@ -310,7 +310,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 
     // Point lights and Spot lights
     let view_z = view_start_pos.z;
-    let is_orthographic = view.clip_from_view[3].w == 1.0;
+    let is_orthographic = view().clip_from_view[3].w == 1.0;
     let cluster_index = clustering::fragment_cluster_index(frag_coord.xy, view_z, is_orthographic);
     var clusterable_object_index_ranges =
         clustering::unpack_clusterable_object_index_ranges(cluster_index);

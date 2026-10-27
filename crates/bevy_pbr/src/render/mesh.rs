@@ -3,7 +3,7 @@ use bevy_asset::{embedded_asset, load_embedded_asset, AssetId};
 use bevy_camera::{
     primitives::Aabb,
     visibility::{NoFrustumCulling, RenderLayers, ViewVisibility, VisibilityRange},
-    Camera, Camera3d, Projection,
+    Camera, Camera3d, CubemapMultiview, Projection,
 };
 use bevy_core_pipeline::{
     core_3d::{AlphaMask3d, Opaque3d, Transmissive3d, Transparent3d, CORE_3D_DEPTH_FORMAT},
@@ -86,7 +86,7 @@ use bevy_render::RenderSystems::PrepareAssets;
 
 use bytemuck::{Pod, Zeroable};
 use nonmax::{NonMaxU16, NonMaxU32};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use static_assertions::const_assert_eq;
 
 /// Provides support for rendering 3D meshes.
@@ -324,6 +324,7 @@ pub fn check_views_need_specialization(
             Has<RenderViewLightProbes<IrradianceVolume>>,
         ),
         Has<OrderIndependentTransparencySettings>,
+        Has<CubemapMultiview>,
     )>,
     ticks: SystemChangeTick,
 ) {
@@ -341,6 +342,7 @@ pub fn check_views_need_specialization(
         distance_fog,
         (has_environment_maps, has_irradiance_volumes),
         has_oit,
+        cubemap_multiview,
     ) in views.iter_mut()
     {
         let mut view_key = MeshPipelineKey::from_msaa_samples(msaa.samples())
@@ -376,6 +378,10 @@ pub fn check_views_need_specialization(
 
         if has_oit {
             view_key |= MeshPipelineKey::OIT_ENABLED;
+        }
+
+        if cubemap_multiview {
+            view_key |= MeshPipelineKey::MULTIVIEW;
         }
 
         if let Some(projection) = projection {
@@ -2094,7 +2100,8 @@ bitflags::bitflags! {
         const OIT_ENABLED                       = 1 << 20;
         const DISTANCE_FOG                      = 1 << 21;
         const DEPTH_WRITE                       = 1 << 22;
-        const LAST_FLAG                         = Self::DEPTH_WRITE.bits();
+        const MULTIVIEW                         = 1 << 23;
+        const LAST_FLAG                         = Self::MULTIVIEW.bits();
 
         // Bitfields
         const MSAA_RESERVED_BITS                = Self::MSAA_MASK_BITS << Self::MSAA_SHIFT_BITS;
@@ -2550,6 +2557,10 @@ impl SpecializedMeshPipeline for MeshPipeline {
             shader_defs.push("DISTANCE_FOG".into());
         }
 
+        if key.contains(MeshPipelineKey::MULTIVIEW) {
+            shader_defs.push("MULTIVIEW".into());
+        }
+
         if self.binding_arrays_are_usable {
             shader_defs.push("MULTIPLE_LIGHT_PROBES_IN_ARRAY".into());
             shader_defs.push("MULTIPLE_LIGHTMAPS_IN_ARRAY".into());
@@ -2628,6 +2639,10 @@ impl SpecializedMeshPipeline for MeshPipeline {
                 alpha_to_coverage_enabled,
             },
             label: Some(label),
+            multiview: key.contains(MeshPipelineKey::MULTIVIEW).then(|| {
+                core::num::NonZeroU32::new(bevy_camera::CUBEMAP_MULTIVIEW_COUNT)
+                    .expect("cubemap view count is non-zero")
+            }),
             ..default()
         })
     }
@@ -2868,6 +2883,7 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMeshViewBindGroup<I> 
         Read<ViewEnvironmentMapUniformOffset>,
         Read<MeshViewBindGroup>,
         Option<Read<OrderIndependentTransparencySettingsOffset>>,
+        Has<CubemapMultiview>,
     );
     type ItemQuery = ();
 
@@ -2883,19 +2899,24 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMeshViewBindGroup<I> 
             view_environment_map,
             mesh_view_bind_group,
             maybe_oit_layers_count_offset,
+            cubemap_multiview,
         ): ROQueryItem<'w, '_, Self::ViewQuery>,
         _entity: Option<()>,
         _: SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let mut offsets: SmallVec<[u32; 8]> = smallvec![
-            view_uniform.offset,
+        let mut offsets: SmallVec<[u32; 8]> = SmallVec::new();
+        // The multiview view uniform is one array, so binding 0 is not dynamic.
+        if !cubemap_multiview {
+            offsets.push(view_uniform.offset);
+        }
+        offsets.extend([
             view_lights.offset,
             view_fog.offset,
             **view_light_probes,
             **view_ssr,
             **view_environment_map,
-        ];
+        ]);
         if let Some(layers_count_offset) = maybe_oit_layers_count_offset {
             offsets.push(layers_count_offset.offset);
         }

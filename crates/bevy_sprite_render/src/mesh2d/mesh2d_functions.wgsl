@@ -15,7 +15,7 @@ fn mesh2d_position_local_to_world(world_from_local: mat4x4<f32>, vertex_position
 }
 
 fn mesh2d_position_world_to_clip(world_position: vec4<f32>) -> vec4<f32> {
-    return view.clip_from_world * world_position;
+    return view().clip_from_world * world_position;
 }
 
 // NOTE: The intermediate world_position assignment is important

@@ -268,10 +268,10 @@ fn calculate_view(
     var V: vec3<f32>;
     if is_orthographic {
         // Orthographic view vector
-        V = normalize(vec3<f32>(view_bindings::view.clip_from_world[0].z, view_bindings::view.clip_from_world[1].z, view_bindings::view.clip_from_world[2].z));
+        V = normalize(vec3<f32>(view_bindings::view().clip_from_world[0].z, view_bindings::view().clip_from_world[1].z, view_bindings::view().clip_from_world[2].z));
     } else {
         // Only valid for a perspective projection
-        V = normalize(view_bindings::view.world_position.xyz - world_position.xyz);
+        V = normalize(view_bindings::view().world_position.xyz - world_position.xyz);
     }
     return V;
 }
@@ -430,10 +430,10 @@ fn apply_pbr_lighting(
 #endif  // STANDARD_MATERIAL_DIFFUSE_TRANSMISSION
 
     let view_z = dot(vec4<f32>(
-        view_bindings::view.view_from_world[0].z,
-        view_bindings::view.view_from_world[1].z,
-        view_bindings::view.view_from_world[2].z,
-        view_bindings::view.view_from_world[3].z
+        view_bindings::view().view_from_world[0].z,
+        view_bindings::view().view_from_world[1].z,
+        view_bindings::view().view_from_world[2].z,
+        view_bindings::view().view_from_world[3].z
     ), in.world_position);
     let cluster_index = clustering::fragment_cluster_index(in.frag_coord.xy, view_z, in.is_orthographic);
     var clusterable_object_index_ranges =
@@ -900,7 +900,7 @@ fn apply_pbr_lighting(
     emissive_light = emissive_light * (0.04 + (1.0 - 0.04) * pow(1.0 - clearcoat_NdotV, 5.0));
 #endif
 
-    emissive_light = emissive_light * mix(1.0, view_bindings::view.exposure, emissive.a);
+    emissive_light = emissive_light * mix(1.0, view_bindings::view().exposure, emissive.a);
 
 #ifdef STANDARD_MATERIAL_SPECULAR_TRANSMISSION
     transmitted_light += transmission::specular_transmissive_light(in.world_position, in.frag_coord.xyz, view_z, in.N, in.V, F0, ior, thickness, perceptual_roughness, specular_transmissive_color, specular_transmitted_environment_light).rgb;
@@ -923,7 +923,7 @@ fn apply_pbr_lighting(
 
     // Total light. A non-negative mix weight replaces the exposed lighting with
     // the cubemap sample, the same way the old LOTUS `mix(lit, cube, w)` did.
-    var exposed_light = view_bindings::view.exposure * (transmitted_light + direct_light + indirect_light);
+    var exposed_light = view_bindings::view().exposure * (transmitted_light + direct_light + indirect_light);
 #ifdef ENVIRONMENT_MAP
     if in.environment_map_mix >= 0.0 {
         // The probe sample is linear HDR (radiance × probe intensity). The old
@@ -932,7 +932,7 @@ fn apply_pbr_lighting(
         // keep the old contrast. The result is converted back to linear for the
         // framebuffer encode.
         let cube_hdr = max(
-            view_bindings::view.exposure * env_mix_sample * in.environment_map_factor,
+            view_bindings::view().exposure * env_mix_sample * in.environment_map_factor,
             vec3<f32>(0.0),
         );
         let cube_ldr = cube_hdr / (vec3<f32>(1.0) + cube_hdr);
@@ -980,7 +980,7 @@ fn apply_fog(fog_params: mesh_view_types::Fog, input_color: vec4<f32>, fragment_
                     0.0
                 ),
                 fog_params.directional_light_exponent
-            ) * light.color.rgb * view_bindings::view.exposure;
+            ) * light.color.rgb * view_bindings::view().exposure;
         }
     }
 
@@ -1041,12 +1041,12 @@ fn main_pass_post_lighting_processing(
 #ifdef DISTANCE_FOG
     // fog
     if ((pbr_input.material.flags & pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT) != 0u) {
-        output_color = apply_fog(view_bindings::fog, output_color, pbr_input.world_position.xyz, view_bindings::view.world_position.xyz);
+        output_color = apply_fog(view_bindings::fog, output_color, pbr_input.world_position.xyz, view_bindings::view().world_position.xyz);
     }
 #endif  // DISTANCE_FOG
 
 #ifdef TONEMAP_IN_SHADER
-    output_color = tone_mapping(output_color, view_bindings::view.color_grading);
+    output_color = tone_mapping(output_color, view_bindings::view().color_grading);
 #ifdef DEBAND_DITHER
     var output_rgb = output_color.rgb;
     output_rgb = powsafe(output_rgb, 1.0 / 2.2);

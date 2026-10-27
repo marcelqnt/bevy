@@ -31,8 +31,15 @@
 #import bevy_pbr::decal::forward::get_forward_decal_info
 #endif
 
+#ifdef MULTIVIEW
+#import bevy_pbr::mesh_view_bindings::set_multiview_index
+#endif
+
 @fragment
 fn fragment(
+#ifdef MULTIVIEW
+    @builtin(view_index) view_index: i32,
+#endif
 #ifdef MESHLET_MESH_MATERIAL_PASS
     @builtin(position) frag_coord: vec4<f32>,
 #else
@@ -40,6 +47,9 @@ fn fragment(
     @builtin(front_facing) is_front: bool,
 #endif
 ) -> FragmentOutput {
+#ifdef MULTIVIEW
+    set_multiview_index(u32(view_index));
+#endif
 #ifdef MESHLET_MESH_MATERIAL_PASS
     let vertex_output = resolve_vertex_output(frag_coord);
     let is_front = true;
