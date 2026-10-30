@@ -2217,7 +2217,14 @@ pub fn queue_shadows(
 
                 let camera_layers = camera_layers.unwrap_or_default();
 
-                if !camera_layers.intersects(mesh_layers) {
+                // Layer 3 is the chunk shadow-block layer (`RENDERLAYER_CHUNK_SHADOW`
+                // in lotus-rs). Those meshes are invisible to every camera, but lights
+                // that include the layer already admitted them in the visibility pass.
+                // Keep them in this camera's shadow map.
+                const SHADOW_ONLY_RENDER_LAYER: usize = 3;
+                if !camera_layers.intersects(mesh_layers)
+                    && !mesh_layers.intersects(&RenderLayers::layer(SHADOW_ONLY_RENDER_LAYER))
+                {
                     continue;
                 }
 
